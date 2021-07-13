@@ -241,6 +241,8 @@ class Trainer(object):
                         self.logger_train.add_scalar(f'{c}/{k}', v, self.curr_iter)
 
                 # evaluate trained model
+                #fast debugging
+                self.config['train']['update_interval'] = 2
                 if (self.curr_iter + 1) % self.config['train']['update_interval'] == 0:
                     val_iters = np.linspace(self.curr_iter + 1 - self.config['train']['update_interval'],
                                             self.curr_iter + 1, len(self.dataloader_val), endpoint=False, dtype=int)

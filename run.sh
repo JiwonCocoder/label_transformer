@@ -1,0 +1,1 @@
+python train/featmatch.py -cf config/cifar10/[cifar10][test][wrn][250][noMix][Transformer][128][pos_enc].json -d 0 -n [cifar10][test][wrn][250][pos_enc][Transformer][128][concat] -i 3 -o -a

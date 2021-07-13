@@ -33,8 +33,8 @@ class AttenHead(nn.Module):
         w = torch.transpose(w, 0, 1)  # Nx x head x Np
 
         return fx, w
-class AttenHeadX(nn.Module):
-    def __init__(self, fdim, num_heads=8, num_classes=10):
+class AttenHeadX_concat(nn.Module):
+    def __init__(self, fdim, d_model, num_heads=8, num_classes=10, label_prop=None):
         super().__init__()
         self.nhead = num_heads
 
@@ -42,9 +42,8 @@ class AttenHeadX(nn.Module):
         self.num_layers = 6
         #self.intermediateDim, self.num_layers
         # is based on Attention is All you Need
-        self.embFC = nn.Linear(fdim, fdim - num_classes)
-        #(in) 128, (out) 512 - 10
-        self.encoder_layer = nn.TransformerEncoderLayer(d_model = fdim, nhead = self.nhead)
+        self.embFC = nn.Linear(fdim + num_classes, d_model)
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model = d_model, nhead = self.nhead)
         self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers = self.num_layers)
         #Encoder : in(1, S, 138), out(1, S, 138)
         # self.deEmbFC = nn.Linear(self.intermediateDim, fdim)
@@ -57,14 +56,53 @@ class AttenHeadX(nn.Module):
         '''
 
     def forward(self, fx, cls_xf):
-        proj_fx = self.embFC(fx) #((bl+bu)*k, 128-num_classes)
-        fx_added_cls = torch.cat([proj_fx, cls_xf], dim=1) #((bl+bu)*k, 128)
-        fx_added_cls = fx_added_cls.unsqueeze(0) #(1, (bl+bu)*k, 128)
-        gx = self.transformer_encoder(fx_added_cls)
+        fx_added_cls = torch.cat([fx, cls_xf], dim=1) #((bl+bu)*k, 138)
+        proj_fx = self.embFC(fx_added_cls)
+        # (in)((bl+bu)*k, 128+num_classes) (out) ((bl+bu)*k, 128)
+        proj_fx = proj_fx.unsqueeze(0) #(1, (bl+bu)*k, 138)
+        gx = self.transformer_encoder(proj_fx)
+
         return gx
 
+
+class AttenHeadX_pos_enc(nn.Module):
+    def __init__(self, fdim, d_model, num_heads=8, num_classes=10, label_prop=None):
+        super().__init__()
+        self.nhead = num_heads
+        # self.intermediateDim = fdim + num_classes #(128 + 10)
+        self.num_layers = 6
+        self.fdim = fdim
+        self.d_model = d_model
+        # self.intermediateDim, self.num_layers
+        # is based on Attention is All you Need
+        if self.fdim != self.d_model:
+            self.embFC_feat = nn.Linear(self.fdim, self.d_model)
+        self.embFC_class = nn.Linear(num_classes, self.d_model)
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model=self.d_model, nhead=self.nhead)
+        self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=self.num_layers)
+        # Encoder : in(1, S, 138), out(1, S, 138)
+        # self.deEmbFC = nn.Linear(self.intermediateDim, fdim)
+        '''
+        TransformerEncoder is a stack of N encoder layers
+        Args:
+            encoder_layer: an instance of the TransformerEncoderLayer () class (required)
+            num_layers: the number of sub-encoder-layer in the encoder(required)
+            norm: the layer normalization component (optional)
+        '''
+
+    def forward(self, fx, cls_xf):
+        if self.fdim != self.d_model:
+            fx = self.embFC_feat(fx)
+        pos_enc_from_cls_xf = self.embFC_class(cls_xf)
+        fx += pos_enc_from_cls_xf
+        fx = fx.unsqueeze(0)
+        gx = self.transformer_encoder(fx)
+        return gx
+
+
 class FeatMatch(nn.Module):
-    def __init__(self, backbone, num_classes, devices, num_heads=1, amp=True, attention='Feat'):
+    def __init__(self, backbone, num_classes, devices, num_heads=1, amp=True,
+                 attention='Feat', d_model = None, label_prop = None):
         super().__init__()
         self.mode = 'train'
         self.num_classes = num_classes
@@ -72,16 +110,24 @@ class FeatMatch(nn.Module):
         self.devices = devices
         self.default_device = torch.device('cuda', devices[0]) if devices is not None else torch.device('cpu')
         fext, self.fdim = make_backbone(backbone)
+
         print(self.devices)
         self.fext = nn.DataParallel(AmpModel(fext, amp), devices)
         print(attention)
+        if d_model is None:
+            self.d_model = self.fdim
+        else:
+            self.d_model = d_model
+            self.deEmbFC = nn.Linear(d_model, self.fdim)
         if attention == 'Feat':
             print("soft attention")
             self.atten = AttenHead(self.fdim, num_heads)
         elif attention == 'Transformer':
             print("transformer")
-            self.atten = AttenHeadX(self.fdim, num_heads, num_classes)
-        print(self.atten)
+            if label_prop == 'concat':
+                self.atten = AttenHeadX_concat(self.fdim, self.d_model, num_heads, num_classes, label_prop)
+            elif label_prop == 'pos_enc':
+                self.atten = AttenHeadX_pos_enc(self.fdim, self.d_model, num_heads, num_classes, label_prop)
         self.clf = nn.Linear(self.fdim, num_classes)
 
     def set_mode(self, mode):
@@ -107,9 +153,9 @@ class FeatMatch(nn.Module):
                 cls_xf = self.clf(fx)
                 # fx_added_cls = torch.cat([fx, cls_xf], dim=1)
                 fxg = self.atten(fx, cls_xf)
-                print(fxg.shape)
+                if self.fdim != self.d_model:
+                    fxg = self.deEmbFC(fxg)
                 fxg = fxg.reshape(fx.shape)
-                print(fxg.shape)
                 cls_xg = self.clf(fxg)
 
             # if self.devices is not None:
