@@ -88,7 +88,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         else:
             return None, None
 
-    def extract_fp(self):
+    # def extract_fp(self):
         fl, yl = self.get_labeled_featrues()
         fu, yu = self.get_unlabeled_features()
         pk = self.config['model']['pk']
@@ -130,7 +130,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         self.yp = torch.cat(yp).to(self.default_device)
         self.lp = torch.cat(lp).to(self.default_device)
 
-    def extract_fp_per_class(self, fx, n, record_mean=True):
+    # def extract_fp_per_class(self, fx, n, record_mean=True):
         if n == 1:
             fp = torch.mean(fx, dim=0, keepdim=True)
         elif record_mean:
@@ -309,7 +309,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         prob_xfu_fake = prob_xfu_fake ** (1. / self.config['transform']['data_augment']['T'])
         prob_xfu_fake = prob_xfu_fake / prob_xfu_fake.sum(dim=1, keepdim=True)
         prob_xfu_fake = prob_xfu_fake.unsqueeze(1).repeat(1, k, 1)
-        pdb.set_trace()
+        # pdb.set_trace()
 
         # Mixup perturbation
         xu = xu.reshape(-1, *xu.shape[2:])
@@ -348,7 +348,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
     def train2_wo_mixup(self, xl, yl, xu):
         bsl, bsu, k, c = len(xl), len(xu), xl.size(1), self.config['model']['classes']
         x = torch.cat([xl, xu], dim=0).reshape(-1, *xl.shape[2:])
-        logits_xg, logits_xf, fx, fxg = self.model(x, self.fp)
+        logits_xg, logits_xf, fx, fxg = self.model(x)
         logits_xg = logits_xg.reshape(bsl + bsu, k, c)
         logits_xf = logits_xf.reshape(bsl + bsu, k, c)
 
@@ -489,7 +489,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         return pred_x, loss, loss_pred, loss_con, loss_graph
 
     def eval2_wo_mixup(self, x, y):
-        logits_xg, logits_xf, fx, fxg = self.model(x, self.fp)
+        logits_xg, logits_xf, fx, fxg = self.model(x)
 
         # Compute pseudo label
         prob_fake = torch.softmax(logits_xg.detach(), dim=1)
@@ -519,9 +519,8 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         yl = data[1].to(self.default_device)
         xu = data[2].reshape(-1, *data[2].shape[2:])
         xu = self.Tnorm(xu.to(self.default_device)).reshape(data[2].shape)
-        #for fast debugging
-        self.config['train']['pretrain_iters'] = 2
-
+        #fast debugging
+        self.config['train']['pretrain_iters'] =2 
         #for debuging training stage#
         if self.config['model']['attention'] == "no":
             self.model.set_mode('pretrain')
@@ -540,18 +539,19 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
                 # loss_graph = 0.0
             elif self.curr_iter == self.config['train']['pretrain_iters']:
                 self.model.set_mode('train')
-                self.extract_fp()
                 if self.config['model']['mixup'] == 'yes':
+                    self.extract_fp()
                     pred_x, loss, loss_pred, loss_con, loss_graph = self.train2(xl, yl, xu)
                 elif self.config['model']['mixup'] == 'no':
                     pred_x, loss, loss_pred, loss_con, loss_graph = self.train2_wo_mixup(xl, yl, xu)
             else:
                 self.model.set_mode('train')
-                if self.curr_iter % self.config['train']['sample_interval'] == 0:
-                    self.extract_fp()
+                # if self.curr_iter % self.config['train']['sample_interval'] == 0:
                 if self.config['model']['mixup'] == 'yes':
+                    self.extract_fp()
                     pred_x, loss, loss_pred, loss_con, loss_graph = self.train2(xl, yl, xu)
                 elif self.config['model']['mixup'] == 'no':
+                    print("train2_wo_mixup")
                     pred_x, loss, loss_pred, loss_con, loss_graph = self.train2_wo_mixup(xl, yl, xu)
         results = {
             'y_pred': torch.max(pred_x, dim=1)[1].detach().cpu().numpy(),

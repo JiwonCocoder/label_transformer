@@ -21,7 +21,6 @@ class AttenHead(nn.Module):
 
         Nx = len(fx_in)
         f = torch.cat([fx_in, fp_in])
-        pdb.set_trace()
         f = torch.stack([getattr(self, f'embd{i}')(f) for i in range(self.num_heads)])  # head x N x fatt
         fx, fp = f[:, :Nx], f[:, Nx:]
 
@@ -76,6 +75,7 @@ class AttenHeadX_pos_enc(nn.Module):
         # self.intermediateDim, self.num_layers
         # is based on Attention is All you Need
         if self.fdim != self.d_model:
+            print("fdim {} is not same as d_model {}". format(str(self.fdim), str(self.d_model)))
             self.embFC_feat = nn.Linear(self.fdim, self.d_model)
         self.embFC_class = nn.Linear(num_classes, self.d_model)
         self.encoder_layer = nn.TransformerEncoderLayer(d_model=self.d_model, nhead=self.nhead)
@@ -93,10 +93,16 @@ class AttenHeadX_pos_enc(nn.Module):
     def forward(self, fx, cls_xf):
         if self.fdim != self.d_model:
             fx = self.embFC_feat(fx)
+        #fx(embFC_feat_out) : (bs*(k+1), d_model)
+        #cls_xf(embFC_class_in) : (bs*(k+1), 10)
         pos_enc_from_cls_xf = self.embFC_class(cls_xf)
-        fx += pos_enc_from_cls_xf
-        fx = fx.unsqueeze(0)
-        gx = self.transformer_encoder(fx)
+        #pos_enc_from_cls_xf(embFC_class_out) : (bs*(k+1), d_model)
+        fx_trans = fx + pos_enc_from_cls_xf
+        fx_trans = fx.unsqueeze(0)
+        #fx_trans (trans_in) : (1, bs*(k+1), d_model)
+        gx = self.transformer_encoder(fx_trans)
+        #gx (trans_out) : (1, bs*(k+1), d_model)
+
         return gx
 
 
@@ -136,7 +142,7 @@ class FeatMatch(nn.Module):
     def extract_feature(self, x):
         return self.fext(x)
 
-    def forward(self, x, fp=None):
+    def forward(self, x):
         if self.mode == 'fext':
             return self.extract_feature(x)
 
@@ -149,14 +155,18 @@ class FeatMatch(nn.Module):
         elif self.mode == 'train':
             if self.devices is not None:
 
-                fx = self.extract_feature(x)
+                fx = self.extract_feature(x) 
+                #fx(clf_input) : (bs*(k+1), fdim)
                 cls_xf = self.clf(fx)
-                # fx_added_cls = torch.cat([fx, cls_xf], dim=1)
+                #cls_xf(clf_out) : (bs*(k+1), num_class)
                 fxg = self.atten(fx, cls_xf)
+                #fxg(atten_out) : (1, bs*(k+1), fdim))
+                fxg = fxg.squeeze(0)
+                #fxg : (bs*(k+1), fdim)
                 if self.fdim != self.d_model:
                     fxg = self.deEmbFC(fxg)
-                fxg = fxg.reshape(fx.shape)
                 cls_xg = self.clf(fxg)
+                #cls_xg(cls_out) : (bs*(k+1), num_class)
 
             # if self.devices is not None:
             #     inputs = (fx, fp.unsqueeze(0).repeat(len(self.devices), 1, 1))
