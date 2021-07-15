@@ -119,7 +119,10 @@ class FeatMatch(nn.Module):
         else:
             self.d_model = d_model
             self.deEmbFC = nn.Linear(d_model, self.fdim)
-        if attention == 'Feat':
+        if attention == 'no':
+            print("init_baseline")
+
+        elif attention == 'Feat':
             print("soft attention")
             self.atten = AttenHead(self.fdim, num_heads)
         elif attention == 'Transformer':
