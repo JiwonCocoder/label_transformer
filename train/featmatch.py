@@ -309,7 +309,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         prob_xfu_fake = prob_xfu_fake ** (1. / self.config['transform']['data_augment']['T'])
         prob_xfu_fake = prob_xfu_fake / prob_xfu_fake.sum(dim=1, keepdim=True)
         prob_xfu_fake = prob_xfu_fake.unsqueeze(1).repeat(1, k, 1)
-        # pdb.set_trace()
+        pdb.set_trace()
 
         # Mixup perturbation
         xu = xu.reshape(-1, *xu.shape[2:])
@@ -520,7 +520,6 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         xu = data[2].reshape(-1, *data[2].shape[2:])
         xu = self.Tnorm(xu.to(self.default_device)).reshape(data[2].shape)
         #fast debugging
-        self.config['train']['pretrain_iters'] =2 
         #for debuging training stage#
         if self.config['model']['attention'] == "no":
             self.model.set_mode('pretrain')
