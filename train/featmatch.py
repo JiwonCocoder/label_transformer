@@ -249,6 +249,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
     def train1_wo_mixup(self, xl, yl, xu):
         # Forward pass on original data
         bsl, bsu, k, c = len(xl), len(xu), xl.size(1), self.config['model']['classes']
+
         x = torch.cat([xl, xu], dim=0).reshape(-1, *xl.shape[2:])
         # ((bsl + bsu) x (k+1) , 3, 32, 32) ex. (1728, 3 , 32, 32)
         logits_x = self.model(x)
@@ -493,7 +494,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         return pred_x, loss, loss_pred, loss_con, loss_graph
 
     def eval2_wo_mixup(self, x, y):
-        logits_xg, logits_xf, fx, fxg = self.model(x)
+        logits_xg, logits_xf, fx, fxg = self.model(x, training=False)
 
         # Compute pseudo label
         prob_fake = torch.softmax(logits_xg.detach(), dim=1)

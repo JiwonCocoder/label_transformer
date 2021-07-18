@@ -183,7 +183,7 @@ class FeatMatch(nn.Module):
     def extract_feature(self, x):
         return self.fext(x)
 
-    def forward(self, x):
+    def forward(self, x , training=True):
         if self.mode == 'fext':
             return self.extract_feature(x)
 
@@ -199,15 +199,21 @@ class FeatMatch(nn.Module):
                 fx = self.extract_feature(x) 
                 #fx(clf_input) : (bs*(k+1), fdim)
                 cls_xf = self.clf(fx)
+                if training:
+                    cls_xf = cls_xf.reshape(-1, self.k, self.num_classes)
+                    prob_xf_fake = torch.softmax(cls_xf[:, 0], dim=1)
+                    prob_xf_fake = prob_xf_fake ** (1. / self.T)
+                    prob_xf_fake = prob_xf_fake / prob_xf_fake.sum(dim=1, keepdim=True)
+                    prob_xf_fake = prob_xf_fake.unsqueeze(1).repeat(1, self.k, 1)
+                    prob_xf_fake = prob_xf_fake.reshape(-1, self.num_classes)
 
-                cls_xf = cls_xf.reshape(-1, self.k, self.num_classes)
-                # Compute pseudo label(f) (bl + bu)
-                prob_xf_fake = torch.softmax(cls_xf[:, 0], dim=1)
-                prob_xf_fake = prob_xf_fake ** (1. / self.T)
-                prob_xf_fake = prob_xf_fake / prob_xf_fake.sum(dim=1, keepdim=True)
-                prob_xf_fake = prob_xf_fake.unsqueeze(1).repeat(1, self.k, 1)
-                prob_xf_fake = prob_xf_fake.reshape(-1, self.num_classes)
-
+                else:
+                    cls_xf = cls_xf.reshape(-1, self.num_classes)
+                    prob_xf_fake = torch.softmax(cls_xf, dim=1)
+                    prob_xf_fake = prob_xf_fake ** (1. / self.T)
+                    prob_xf_fake = prob_xf_fake / prob_xf_fake.sum(dim=1, keepdim=True)
+                    prob_xf_fake = prob_xf_fake.unsqueeze(1).repeat(1, 1, 1)
+                    prob_xf_fake = prob_xf_fake.reshape(-1, self.num_classes)
                 #cls_xf(clf_out) : (bs*(k+1), num_class)
                 fxg = self.atten(fx.detach(), prob_xf_fake.detach())
                 #fxg(atten_out) : (1, bs*(k+1), fdim))
