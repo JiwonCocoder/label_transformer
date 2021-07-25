@@ -38,7 +38,9 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
                           amp=self.args.amp,
                           attention = self.config['model']['attention'], #config added
                           d_model = self.config['model']['d_model'],
-                          label_prop = self.config['model']['label_prop']
+                          label_prop = self.config['model']['label_prop'],
+                          detach = self.config['model']['detach'],
+                          scaled = self.config['model']['scaled']
                           )
         print(f'Use [{self.config["model"]["backbone"]}] model with [{misc.count_n_parameters(model):,}] parameters')
         return model

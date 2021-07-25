@@ -14,7 +14,6 @@ class AttenHead(nn.Module):
             setattr(self, f'fc{i}', nn.Linear(2*self.fatt, self.fatt))
         self.fc = nn.Linear(self.fatt*num_heads, fdim)
         self.dropout = nn.Dropout(0.1)
-
     def forward(self, fx_in, fp_in):
         fp_in = fp_in.squeeze(0)
         d = math.sqrt(self.fatt)
@@ -33,10 +32,12 @@ class AttenHead(nn.Module):
 
         return fx, w
 class AttenHeadX_concat(nn.Module):
-    def __init__(self, fdim, d_model, num_heads=8, num_classes=10, label_prop=None):
+    def __init__(self, fdim, d_model, num_heads=8, num_classes=10, scaled=None):
         super().__init__()
+        self.scaled = scaled
         self.nhead = num_heads
-
+        self.d_model = d_model
+        self.f_dim = fdim
         # self.intermediateDim = fdim + num_classes #(128 + 10)
         self.num_layers = 6
         #self.intermediateDim, self.num_layers
@@ -57,16 +58,24 @@ class AttenHeadX_concat(nn.Module):
     def forward(self, fx, cls_xf):
         fx_added_cls = torch.cat([fx, cls_xf], dim=1) #((bl+bu)*k, 138)
         proj_fx = self.embFC(fx_added_cls)
+
+        if self.scaled == "yes":
+            proj_fx_scaled = proj_fx * math.sqrt(self.d_model)
+            # (in)((bl+bu)*k, 128+num_classes) (out) ((bl+bu)*k, 128)
+            proj_fx_scaled = proj_fx_scaled.unsqueeze(0) #(1, (bl+bu)*k, 138)
+            gx = self.transformer_encoder(proj_fx_scaled)
         # (in)((bl+bu)*k, 128+num_classes) (out) ((bl+bu)*k, 128)
-        proj_fx = proj_fx.unsqueeze(0) #(1, (bl+bu)*k, 138)
-        gx = self.transformer_encoder(proj_fx)
+        elif self.scaled == "no":
+            proj_fx = proj_fx.unsqueeze(0) #(1, (bl+bu)*k, 138)
+            gx = self.transformer_encoder(proj_fx)
 
         return gx
 
 
 class AttenHeadX_pos_enc(nn.Module):
-    def __init__(self, fdim, d_model, num_heads=8, num_classes=10, label_prop=None):
+    def __init__(self, fdim, d_model, num_heads=8, num_classes=10, scaled=None):
         super().__init__()
+        self.scaled = scaled
         self.nhead = num_heads
         # self.intermediateDim = fdim + num_classes #(128 + 10)
         self.num_layers = 6
@@ -98,17 +107,24 @@ class AttenHeadX_pos_enc(nn.Module):
         pos_enc_from_cls_xf = self.embFC_class(cls_xf)
         #pos_enc_from_cls_xf(embFC_class_out) : (bs*(k+1), d_model)
         fx_trans = fx + pos_enc_from_cls_xf
-        fx_trans = fx.unsqueeze(0)
-        #fx_trans (trans_in) : (1, bs*(k+1), d_model)
-        gx = self.transformer_encoder(fx_trans)
-        #gx (trans_out) : (1, bs*(k+1), d_model)
+        if self.scaled == "yes":
+            fx_trans_scaled = fx_trans * math.sqrt(self.d_model)
+            fx_trans_scaled = fx_trans_scaled.unsqueeze(0)
+            #fx_trans (trans_in) : (1, bs*(k+1), d_model)
+            gx = self.transformer_encoder(fx_trans_scaled)
+        elif self.scaled == "no":
+            fx_trans = fx.unsqueeze(0)
+            #fx_trans (trans_in) : (1, bs*(k+1), d_model)
+            gx = self.transformer_encoder(fx_trans)
+            #gx (trans_out) : (1, bs*(k+1), d_model)    
+
 
         return gx
 
 
 class FeatMatch(nn.Module):
     def __init__(self, backbone, num_classes, devices, num_heads=1, amp=True,
-                 attention='Feat', d_model = None, label_prop = None):
+                 attention='Feat', d_model = None, label_prop = None, detach = None, scaled = None):
         super().__init__()
         self.mode = 'train'
         self.num_classes = num_classes
@@ -116,11 +132,15 @@ class FeatMatch(nn.Module):
         self.devices = devices
         self.default_device = torch.device('cuda', devices[0]) if devices is not None else torch.device('cpu')
         fext, self.fdim = make_backbone(backbone)
-
+        self.detach = detach        
         print(self.devices)
         self.fext = nn.DataParallel(AmpModel(fext, amp), devices)
         print(attention)
-        if d_model is None:
+        if d_model  == self.fdim:
+            print("self.fdim {} is same as d_model{}".format(self.fdim, d_model))
+            print("========================")
+            print("correct")
+            print("========================")
             self.d_model = self.fdim
         else:
             self.d_model = d_model
@@ -132,11 +152,16 @@ class FeatMatch(nn.Module):
             print("soft attention")
             self.atten = AttenHead(self.fdim, num_heads)
         elif attention == 'Transformer':
-            print("transformer")
             if label_prop == 'concat':
-                self.atten = AttenHeadX_concat(self.fdim, self.d_model, num_heads, num_classes, label_prop)
+                print("========================")            
+                print("transformer_concat")
+                print("========================")
+                self.atten = AttenHeadX_concat(self.fdim, self.d_model, num_heads, num_classes, scaled)
             elif label_prop == 'pos_enc':
-                self.atten = AttenHeadX_pos_enc(self.fdim, self.d_model, num_heads, num_classes, label_prop)
+                print("========================")            
+                print("transformer_pos_enc")
+                print("========================")                
+                self.atten = AttenHeadX_pos_enc(self.fdim, self.d_model, num_heads, num_classes, scaled)
         self.clf = nn.Linear(self.fdim, num_classes)
 
     def set_mode(self, mode):
@@ -161,12 +186,19 @@ class FeatMatch(nn.Module):
                 fx = self.extract_feature(x) 
                 #fx(clf_input) : (bs*(k+1), fdim)
                 cls_xf = self.clf(fx)
+                if self.detach == 'yes':
+                    fx = fx.detach()
+                    cls_xf = cls_xf.detach()
                 #cls_xf(clf_out) : (bs*(k+1), num_class)
                 fxg = self.atten(fx, cls_xf)
                 #fxg(atten_out) : (1, bs*(k+1), fdim))
                 fxg = fxg.squeeze(0)
                 #fxg : (bs*(k+1), fdim)
                 if self.fdim != self.d_model:
+                    print("self.fdim {} is not same as self.d_model {}".format(self.fdim, self.fdim))
+                    print("==================")
+                    print("(error)deEmbedding is operating")
+                    print("===================")
                     fxg = self.deEmbFC(fxg)
                 cls_xg = self.clf(fxg)
                 #cls_xg(cls_out) : (bs*(k+1), num_class)
