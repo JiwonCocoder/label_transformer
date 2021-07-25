@@ -526,7 +526,6 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         if self.config['model']['attention'] == "no":
             self.model.set_mode('pretrain')
             if self.config['model']['mixup'] == 'no':
-                pdb.set_trace()
                 pred_x, loss, loss_pred, loss_con, loss_graph = self.train1_wo_mixup(xl, yl, xu)
             elif self.config['model']['mixup'] == 'yes':
                 print("train1_w_mixup")
