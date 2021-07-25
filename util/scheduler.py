@@ -30,12 +30,15 @@ class SupConvScheduler:
         elif stage == 1:  # ramp-up
             lr = self.base_lr + (current_iter - self.milestones[0]) * self.ramp_slope
             mom = self.max_mom - (current_iter - self.milestones[0]) * self.mom_slope
+            print(f'ramp_up:lr={lr},mom={mom}')
         elif stage == 2:  # ramp-down
             lr = self.max_lr - (current_iter - self.milestones[1]) * self.ramp_slope
             mom = self.min_mom + (current_iter - self.milestones[1]) * self.mom_slope
+            print(f'ramp_down:lr={lr},mom={mom}')
         elif stage == 3:  # ending
             lr = self.base_lr - (current_iter - self.milestones[2]) * self.end_slope
             mom = self.max_mom
+            print(f'end:lr={lr},mom={mom}')
         else:
             raise ValueError
 

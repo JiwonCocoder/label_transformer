@@ -45,130 +45,130 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         print(f'Use [{self.config["model"]["backbone"]}] model with [{misc.count_n_parameters(model):,}] parameters')
         return model
 
-    def get_labeled_featrues(self):
-        mode = self.model.training
-        self.model.eval()
-        with torch.no_grad():
-            labeled_dset = self.dataloader_train.labeled_dset.dataset
-            xl = torch.stack([self.Tval(xi) for xi in labeled_dset.get_x()])
-            bs = (self.config['train']['bsl'] + self.config['train']['bsu'])*self.config['transform']['data_augment']['K']
-            fl = []
-            for i in range(math.ceil(len(xl) / bs)):
-                xli = self.Tnorm(xl[i*bs:min((i+1)*bs, len(xl))].to(self.default_device))
-                fli = self.model.extract_feature(xli)
-                fl.append(fli.detach().clone().float().cpu())
-            fl = torch.cat(fl)
-            yl = torch.tensor(labeled_dset.y).cpu()
-        self.model.train(mode)
+    # def get_labeled_featrues(self):
+    #     mode = self.model.training
+    #     self.model.eval()
+    #     with torch.no_grad():
+    #         labeled_dset = self.dataloader_train.labeled_dset.dataset
+    #         xl = torch.stack([self.Tval(xi) for xi in labeled_dset.get_x()])
+    #         bs = (self.config['train']['bsl'] + self.config['train']['bsu'])*self.config['transform']['data_augment']['K']
+    #         fl = []
+    #         for i in range(math.ceil(len(xl) / bs)):
+    #             xli = self.Tnorm(xl[i*bs:min((i+1)*bs, len(xl))].to(self.default_device))
+    #             fli = self.model.extract_feature(xli)
+    #             fl.append(fli.detach().clone().float().cpu())
+    #         fl = torch.cat(fl)
+    #         yl = torch.tensor(labeled_dset.y).cpu()
+    #     self.model.train(mode)
+    #
+    #     return fl, yl
 
-        return fl, yl
-
-    def get_unlabeled_features(self, thres=0.5, max_iter=5):
-        if len(self.fu) == 0:
-            return None, None
-
-        fu = torch.cat(self.fu).detach().clone()
-        pu = torch.cat(self.pu).detach().clone()
-        prob, yu = torch.max(pu, dim=1)
-
-        flag = False
-        #max_iter = 5
-        for _ in range(max_iter):
-            idx_thres = (prob > thres)
-            yu_ = yu[idx_thres]
-            class_distribution = torch.stack([torch.sum(yu_ == i) for i in range(self.config['model']['classes'])])
-
-            if not (class_distribution > self.config['model']['pk']).all():
-                thres = thres / 2.
-            else:
-                flag = True
-                break
-        del self.fu[:]
-        del self.pu[:]
-        if flag:
-            return fu[idx_thres], yu[idx_thres]
-        else:
-            return None, None
+    # def get_unlabeled_features(self, thres=0.5, max_iter=5):
+    #     if len(self.fu) == 0:
+    #         return None, None
+    #
+    #     fu = torch.cat(self.fu).detach().clone()
+    #     pu = torch.cat(self.pu).detach().clone()
+    #     prob, yu = torch.max(pu, dim=1)
+    #
+    #     flag = False
+    #     #max_iter = 5
+    #     for _ in range(max_iter):
+    #         idx_thres = (prob > thres)
+    #         yu_ = yu[idx_thres]
+    #         class_distribution = torch.stack([torch.sum(yu_ == i) for i in range(self.config['model']['classes'])])
+    #
+    #         if not (class_distribution > self.config['model']['pk']).all():
+    #             thres = thres / 2.
+    #         else:
+    #             flag = True
+    #             break
+    #     del self.fu[:]
+    #     del self.pu[:]
+    #     if flag:
+    #         return fu[idx_thres], yu[idx_thres]
+    #     else:
+    #         return None, None
 
     # def extract_fp(self):
-        fl, yl = self.get_labeled_featrues()
-        fu, yu = self.get_unlabeled_features()
-        pk = self.config['model']['pk']
-        rl = self.config['model']['l_ratio']
+    #     fl, yl = self.get_labeled_featrues()
+    #     fu, yu = self.get_unlabeled_features()
+    #     pk = self.config['model']['pk']
+    #     rl = self.config['model']['l_ratio']
+    #
+    #     fp, yp, lp = [], [], []
+    #     print("fu is None?:" , fu == None)
+    #     for yi in torch.unique(yl, sorted=True):
+    #         if fu is None:  # all prototypes extracted from labeled data
+    #             fpi = self.extract_fp_per_class(fl[yl == yi], pk, record_mean=True)
+    #             pkl = len(fpi)
+    #             fp.append(fpi)
+    #             yp.append(torch.full((pkl,), yi, device=self.default_device, dtype=torch.long))
+    #             lp.append(torch.ones_like(yp[-1]))
+    #         else:
+    #             if pk == 1:
+    #                 fpi = self.extract_fp_per_class(torch.cat([fl[yl == yi], fu[yu == yi]]), 1, record_mean=True)
+    #                 pkl = len(fpi)
+    #                 fp.append(fpi)
+    #                 yp.append(torch.full((pkl,), yi, device=self.default_device, dtype=torch.long))
+    #                 lp.append(torch.ones_like(yp[-1]))
+    #             else:
+    #                 # prototypes extracted from labeled data
+    #                 #pk * rl(label_ratio) = 20 * 0.5 = 10
+    #                 fpi = self.extract_fp_per_class(fl[yl == yi], max(1, int(round(pk*rl))), record_mean=True)
+    #                 pkl = len(fpi)
+    #                 fp.append(fpi)
+    #                 yp.append(torch.full((pkl,), yi, device=self.default_device, dtype=torch.long))
+    #                 # yp.append(torch.size([pkl])
+    #                 lp.append(torch.ones_like(yp[-1]))
+    #                 # prototypes extracted from unlabeled data
+    #                 fpi = self.extract_fp_per_class(fu[yu == yi], max(1, pk - pkl), record_mean=True)
+    #                 pku = len(fpi)
+    #                 fp.append(fpi)
+    #                 yp.append(torch.full((pku,), yi, device=self.default_device, dtype=torch.long))
+    #                 lp.append(torch.zeros_like(yp[-1]))
+    #
+    #     self.fp = torch.cat(fp).to(self.default_device)
+    #     self.yp = torch.cat(yp).to(self.default_device)
+    #     self.lp = torch.cat(lp).to(self.default_device)
+    #
+    # # def extract_fp_per_class(self, fx, n, record_mean=True):
+    #     if n == 1:
+    #         fp = torch.mean(fx, dim=0, keepdim=True)
+    #     elif record_mean:
+    #         n = n-1
+    #         fm = torch.mean(fx, dim=0, keepdim=True)
+    #         if n >= len(fx):
+    #             fp = fx
+    #         else:
+    #             fp = self.kmeans(fx, n, 'cosine')
+    #         fp = torch.cat([fm, fp], dim=0)
+    #     else:
+    #         if n >= len(fx):
+    #             fp = fx
+    #         else:
+    #             fp = self.kmeans(fx, n, 'cosine')
+    #
+    #     return fp
 
-        fp, yp, lp = [], [], []
-        print("fu is None?:" , fu == None)
-        for yi in torch.unique(yl, sorted=True):
-            if fu is None:  # all prototypes extracted from labeled data
-                fpi = self.extract_fp_per_class(fl[yl == yi], pk, record_mean=True)
-                pkl = len(fpi)
-                fp.append(fpi)
-                yp.append(torch.full((pkl,), yi, device=self.default_device, dtype=torch.long))
-                lp.append(torch.ones_like(yp[-1]))
-            else:
-                if pk == 1:
-                    fpi = self.extract_fp_per_class(torch.cat([fl[yl == yi], fu[yu == yi]]), 1, record_mean=True)
-                    pkl = len(fpi)
-                    fp.append(fpi)
-                    yp.append(torch.full((pkl,), yi, device=self.default_device, dtype=torch.long))
-                    lp.append(torch.ones_like(yp[-1]))
-                else:
-                    # prototypes extracted from labeled data
-                    #pk * rl(label_ratio) = 20 * 0.5 = 10
-                    fpi = self.extract_fp_per_class(fl[yl == yi], max(1, int(round(pk*rl))), record_mean=True)
-                    pkl = len(fpi)
-                    fp.append(fpi)
-                    yp.append(torch.full((pkl,), yi, device=self.default_device, dtype=torch.long))
-                    # yp.append(torch.size([pkl])
-                    lp.append(torch.ones_like(yp[-1]))
-                    # prototypes extracted from unlabeled data
-                    fpi = self.extract_fp_per_class(fu[yu == yi], max(1, pk - pkl), record_mean=True)
-                    pku = len(fpi)
-                    fp.append(fpi)
-                    yp.append(torch.full((pku,), yi, device=self.default_device, dtype=torch.long))
-                    lp.append(torch.zeros_like(yp[-1]))
-
-        self.fp = torch.cat(fp).to(self.default_device)
-        self.yp = torch.cat(yp).to(self.default_device)
-        self.lp = torch.cat(lp).to(self.default_device)
-
-    # def extract_fp_per_class(self, fx, n, record_mean=True):
-        if n == 1:
-            fp = torch.mean(fx, dim=0, keepdim=True)
-        elif record_mean:
-            n = n-1
-            fm = torch.mean(fx, dim=0, keepdim=True)
-            if n >= len(fx):
-                fp = fx
-            else:
-                fp = self.kmeans(fx, n, 'cosine')
-            fp = torch.cat([fm, fp], dim=0)
-        else:
-            if n >= len(fx):
-                fp = fx
-            else:
-                fp = self.kmeans(fx, n, 'cosine')
-
-        return fp
-
-    @staticmethod
-    def kmeans(fx, n, metric='cosine'):
-        device = fx.device
-
-        if metric == 'cosine':
-            fn = fx / torch.clamp(torch.norm(fx, dim=1, keepdim=True), min=1e-20)
-        elif metric == 'euclidean':
-            fn = fx
-        else:
-            raise KeyError
-        fn = fn.detach().cpu().numpy()
-        fx = fx.detach().cpu().numpy()
-
-        labels = KMeans(n_clusters=n).fit_predict(fn)
-        fp = np.stack([np.mean(fx[labels == li], axis=0) for li in np.unique(labels)])
-        fp = torch.FloatTensor(fp).to(device)
-
-        return fp
+    # @staticmethod
+    # def kmeans(fx, n, metric='cosine'):
+    #     device = fx.device
+    #
+    #     if metric == 'cosine':
+    #         fn = fx / torch.clamp(torch.norm(fx, dim=1, keepdim=True), min=1e-20)
+    #     elif metric == 'euclidean':
+    #         fn = fx
+    #     else:
+    #         raise KeyError
+    #     fn = fn.detach().cpu().numpy()
+    #     fx = fx.detach().cpu().numpy()
+    #
+    #     labels = KMeans(n_clusters=n).fit_predict(fn)
+    #     fp = np.stack([np.mean(fx[labels == li], axis=0) for li in np.unique(labels)])
+    #     fp = torch.FloatTensor(fp).to(device)
+    #
+    #     return fp
 
     def data_mixup(self, xl, prob_xl, xu, prob_xu, alpha=0.75):
         Nl = len(xl)
@@ -546,7 +546,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
             elif self.curr_iter == self.config['train']['pretrain_iters']:
                 self.model.set_mode('train')
                 if self.config['model']['mixup'] == 'yes':
-                    self.extract_fp()
+                    # self.extract_fp()
                     pred_x, loss, loss_pred, loss_con, loss_graph = self.train2(xl, yl, xu)
                 elif self.config['model']['mixup'] == 'no':
                     pred_x, loss, loss_pred, loss_con, loss_graph = self.train2_wo_mixup(xl, yl, xu)
@@ -554,7 +554,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
                 self.model.set_mode('train')
                 # if self.curr_iter % self.config['train']['sample_interval'] == 0:
                 if self.config['model']['mixup'] == 'yes':
-                    self.extract_fp()
+                    # self.extract_fp()
                     pred_x, loss, loss_pred, loss_con, loss_graph = self.train2(xl, yl, xu)
                 elif self.config['model']['mixup'] == 'no':
                     print("train2_wo_mixup")

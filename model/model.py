@@ -58,7 +58,6 @@ class AttenHeadX_concat(nn.Module):
     def forward(self, fx, cls_xf):
         fx_added_cls = torch.cat([fx, cls_xf], dim=1) #((bl+bu)*k, 138)
         proj_fx = self.embFC(fx_added_cls)
-
         if self.scaled == "yes":
             proj_fx_scaled = proj_fx * math.sqrt(self.d_model)
             # (in)((bl+bu)*k, 128+num_classes) (out) ((bl+bu)*k, 128)
@@ -136,7 +135,7 @@ class FeatMatch(nn.Module):
         print(self.devices)
         self.fext = nn.DataParallel(AmpModel(fext, amp), devices)
         print(attention)
-        if d_model  == self.fdim:
+        if d_model == self.fdim:
             print("self.fdim {} is same as d_model{}".format(self.fdim, d_model))
             print("========================")
             print("correct")

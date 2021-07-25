@@ -1,3 +1,5 @@
+import pdb
+
 import numpy as np
 import git
 from tqdm import tqdm
@@ -124,7 +126,6 @@ class Trainer(object):
         total_iters = self.config['train']['pretrain_iters'] + \
                       2 * self.config['train']['cycle_iters'] + \
                       self.config['train']['end_iters']
-
         return sc, total_iters
 
     def save(self):
@@ -168,21 +169,45 @@ class Trainer(object):
         :return curr_result: float. current result.
         :return best_result: float. best result so far.
         """
+        print("---------------------------")
+        print(mode)
+        print("---------------------------")
         if mode == 'new':
             curr_iter, curr_result, best_result = 0, 0.0, 0.0
+        elif mode == 'pretrained':
+            # ckpt_file = '../pretrained_weights/{}/pretrained_best_ckpt'.format(self.config["data"]["dataset"])
+            ckpt_file = '/home/ubuntu/label_prop_prev/label_transformer/pretrained_weights/cifar10/pretrained_best_ckpt'
+            checkpoint = torch.load(ckpt_file, map_location=self.default_device)
+            # target_model = getattr(self, 'model')
+            target_model_ext = getattr(self, 'model').fext
+            self.model.fext = target_model_ext
+
+            curr_iter = self.config['train']['pretrain_iters'] + 1
+            curr_result = checkpoint['curr_result']
+            best_result = checkpoint['best_result']
+            cprint(f'Load from iteration [{checkpoint["last_iter"]}], '
+                   f'with current result = {checkpoint["curr_result"]*100:.2f} %, '
+                   f'best result = {checkpoint["best_result"]*100:.2f} %,'
+                   f'but curr_iter = {curr_iter}',
+                   color='blue', attrs=['bold'])
         else:
             if mode == 'resume':
                 ckpt_file = self.root_dir / 'curr_ckpt'
+                checkpoint = torch.load(ckpt_file, map_location=self.default_device)
             elif mode == 'test':
                 ckpt_file = self.root_dir / 'best_ckpt'
+                checkpoint = torch.load(ckpt_file, map_location=self.default_device)
             else:
                 raise KeyError
-            checkpoint = torch.load(ckpt_file, map_location=self.default_device)
+            # ckpt = dict()
+            # #ckpt['model']['atten.transformer_encoder.layers.5.norm2.bias']
 
+            ckpt = dict()
+            #self.state_objs => ['model', 'optimizer']
             for obj in self.state_objs:
-                getattr(self, obj).load_state_dict(checkpoint[obj])
+                ckpt[obj] = getattr(self, obj).state_dict()
             for obj in self.attr_objs:
-                setattr(self, obj, checkpoint[obj])
+                ckpt[obj] = getattr(self, obj)
             self.scaler.load_state_dict(checkpoint["amp"])
             curr_iter = checkpoint['last_iter'] + 1
             curr_result = checkpoint['curr_result']
@@ -191,7 +216,6 @@ class Trainer(object):
                    f'with current result = {checkpoint["curr_result"]*100:.2f} %, '
                    f'best result = {checkpoint["best_result"]*100:.2f} %',
                    color='blue', attrs=['bold'])
-
         (self.root_dir / f'{best_result * 100:.2f}').touch()
         return curr_iter, curr_result, best_result
 
