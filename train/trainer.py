@@ -151,13 +151,13 @@ class Trainer(object):
         # save result
         with open(self.root_dir / 'results.txt', 'a+') as file:
             file.write(f'{self.curr_result}\n')
-        if (self.curr_iter + 1) == self.config['train']['update_interval']:
+        if (self.curr_iter + 1) == self.config['train']['pretrain_iters']:
             torch.save(ckpt, self.root_dir / 'pretrained_3000_ckpt')
         # save best checkpoint
         if better_result:
             print(f'[{self.curr_iter}] Save best model with result = {self.best_result * 100:.2f} %')
             shutil.copyfile(self.root_dir / 'curr_ckpt', self.root_dir / 'best_ckpt')
-            if (self.curr_iter + 1) == self.config['train']['update_interval']:
+            if (self.curr_iter + 1) == self.config['train']['pretrain_iters']:
                 torch.save(self.root_dir / 'best_ckpt', self.root_dir / 'pretrained_best_3000_ckpt')
         return
 
