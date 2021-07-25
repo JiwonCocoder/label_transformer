@@ -8,6 +8,7 @@ import sys
 sys.path.append('.')
 from util import data
 from dataloader import SSLDataset
+from collections import Counter
 
 
 class CifarSSL(SSLDataset):
@@ -34,13 +35,19 @@ class Cifar10SSL(CifarSSL):
         y = np.concatenate([np.array(batch['labels'], dtype=np.int) for batch in batches]) #All_y in files
         if r_val is not None: #if we have to separate val from train
             (xv, yv), (x, y) = data.split_data(x.copy(), y.copy(), rand_seed, r_val)
+
         else:
             xv, yv = xt, yt # else val = test
         (xl, yl), (xu, yu) = data.split_data(x.copy(), y.copy(), rand_seed, r_lab)
         # reduce data
         if r_data is not None: #(reduce_data)
             xu, yu = data.split_data(xu.copy(), yu.copy(), rand_seed, r_data)[0]
-
+        test_class_count = Counter(yv)
+        train_class_count = Counter(yl)
+        print("---------------------")
+        print("train_class_count:", train_class_count)
+        print("test_class_count:", test_class_count)
+        print("---------------------")
         return xl, yl, xu, xv, yv, xt, yt
 
 
