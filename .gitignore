@@ -2,9 +2,11 @@ data/
 config/
 dataset/
 weights/
+*.sh
 run1.sh
 run2.sh
 run3.sh
 run4.sh
-**/__pycache__
+__pycache__/
+*.py[cod]
 
