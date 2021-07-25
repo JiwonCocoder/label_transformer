@@ -193,13 +193,13 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         bsl, bsu, k, c = len(xl), len(xu), xl.size(1), self.config['model']['classes']
         x = torch.cat([xl, xu], dim=0).reshape(-1, *xl.shape[2:])
         # ((bsl + bsu) x (k+1) , 3, 32, 32) ex. (1728, 3 , 32, 32)
-        print("pretraining_stage_input_shape:", x.shape)
+        # print("pretraining_stage_input_shape:", x.shape)
         logits_x = self.model(x)
         # ((bsl + bsu) x (k+1) , 10) ex.(1728, 10)
-        print("pretraining_stage_output_shape:", logits_x.shape)
+        # print("pretraining_stage_output_shape:", logits_x.shape)
         logits_x = logits_x.reshape(bsl + bsu, k, c)
         # ((bsl + bsu) x (k+1) , 10) ex.(192, 9, 10)
-        print("pretraining_stage_output_shape:", logits_x.shape)
+        # print("pretraining_stage_output_shape:", logits_x.shape)
         logits_xl, logits_xu = logits_x[:bsl], logits_x[bsl:]
         # ex. (64, 9, 10) , (128, 9, 10)
 
@@ -525,7 +525,13 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         #for debuging training stage#
         if self.config['model']['attention'] == "no":
             self.model.set_mode('pretrain')
-            pred_x, loss, loss_pred, loss_con, loss_graph = self.train1_wo_mixup(xl, yl, xu)
+            if self.config['model']['mixup'] == 'no':
+                pdb.set_trace()
+                pred_x, loss, loss_pred, loss_con, loss_graph = self.train1_wo_mixup(xl, yl, xu)
+            elif self.config['model']['mixup'] == 'yes':
+                print("train1_w_mixup")
+                pred_x, loss, loss_pred, loss_con, loss_graph = self.train1(xl, yl, xu)
+
         elif self.config['model']['attention'] == "Transformer":
             if self.curr_iter < self.config['train']['pretrain_iters']:
                 self.model.set_mode('pretrain')
