@@ -291,6 +291,61 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
 
         return pred_x, loss, loss_pred, loss_con, loss_graph
 
+    def train2_w_mixup(self, xl, yl, xu):
+        bsl, bsu, k, c = len(xl), len(xu), xl.size(1), self.config['model']['classes']
+        x = torch.cat([xl, xu], dim=0).reshape(-1, *xl.shape[2:])
+        fx = self.model.extract_feature(x)
+        logits_x = self.model.cls(fx)
+        logits_x = logits_x.reshape(bsl + bsu, k, c)
+        logits_xl, logits_xu = logits_x[:bsl], logits_x[bsl:]
+        # Compute pseudo label(xfu)
+        prob_xu_fake = torch.softmax(logits_xu[:, 0].detach(), dim=1)
+        prob_xu_fake = prob_xu_fake ** (1. / self.config['transform']['data_augment']['T'])
+        prob_xu_fake = prob_xu_fake / prob_xu_fake.sum(dim=1, keepdim=True)
+        prob_xu_fake = prob_xu_fake.unsqueeze(1).repeat(1, k, 1)
+        #compute label(xfl)
+        prob_xl_gt = torch.zeros(len(xl), c, device=xl.device) #(576, 10)
+        prob_xl_gt.scatter_(dim=1, index=yl.unsqueeze(1).repeat(1, k).reshape(-1, 1), value=1.)
+
+        #img_for_mixup
+        xu = xu.reshape(-1, *xu.shape[2:]) #(576, 3, 32, 32)
+        xl = xl.reshape(-1, *xl.shape[2:]) #(1152, 3, 32, 32)
+        pdb.set_trace()
+
+        xl_mix, probl_mix, xu_mix, probu_mix = self.data_mixup(xl, prob_xl_gt, xu, prob_xu_fake.reshape(-1, c))
+
+        # Forward pass on mixed data
+        Nl = len(xl_mix)
+        x_mix = torch.cat([xl_mix, xu_mix], dim=0)
+        prob_mix = torch.cat([xl_mix, xu_mix], dim=0)
+        logits_xg_mix, logits_xf_mix, fx, fxg = self.model(x_mix, prob_mix)
+
+        logits_xg_mix = logits_xg_mix.reshape(bsl + bsu, k, c)
+        logits_xf_mix = logits_xf_mix.reshape(bsl + bsu, k, c)
+
+        logits_xgl_mix, logits_xgu_mix = logits_xg_mix[:bsl], logits_xg_mix[bsl:]
+        logits_xfl_mix, logits_xfu_mix = logits_xf_mix[:bsl], logits_xf_mix[bsl:]
+
+        pdb.set_trace()
+
+        # CLF1 loss
+        loss_pred = self.criterion(None, probl_mix, logits_xgl_mix.reshape(-1,c), None)
+
+        # Mixup loss
+        loss_con = self.criterion(None, probu_mix, logits_xgu_mix.reshape(-1,c), None)
+
+        # Graph loss
+        loss_graph = self.criterion(None, probu_mix, logits_xfu_mix.reshape(-1,c), None)
+
+        # Total loss
+        coeff = self.get_consistency_coeff()
+        loss = loss_pred + coeff * (self.config['loss']['mix'] * loss_con + self.config['loss']['graph'] * loss_graph)
+
+        # Prediction
+        pred_x = torch.softmax(logits_xgl[:, 0].detach(), dim=1)
+
+        return pred_x, loss, loss_pred, loss_con, loss_graph
+
     def train2(self, xl, yl, xu):
         bsl, bsu, k, c = len(xl), len(xu), xl.size(1), self.config['model']['classes']
         x = torch.cat([xl, xu], dim=0).reshape(-1, *xl.shape[2:])
@@ -328,8 +383,6 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         logits_xfl_mix, logits_xfu_mix = logits_xf_mix[:Nl], logits_xf_mix[Nl:]
 
         # CLF1 loss
-        loss_pred = self.criterion(None, probl_mix, logits_xgl_mix, None)
-
         loss_pred = self.criterion(None, probl_mix, logits_xgl_mix, None)
 
         # Mixup loss
@@ -400,9 +453,10 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         loss = loss_pred + coeff * (self.config['loss']['mix'] * loss_con + self.config['loss']['graph'] * loss_graph)
 
         # Prediction
-        pred_x = torch.softmax(logits_xgl[:, 0].detach(), dim=1)
+        pred_xg = torch.softmax(logits_xgl[:, 0].detach(), dim=1)
+        pred_xf = torch.softmax(logits_xfl[:, 0].detach(), dim=1)
 
-        return pred_x, loss, loss_pred, loss_con, loss_graph
+        return pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph
 
 
     def eval1(self, x, y):
@@ -510,9 +564,9 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         loss = loss_pred + coeff*(self.config['loss']['mix']*loss_con + self.config['loss']['graph']*loss_graph)
 
         # Prediction
-        pred_x = torch.softmax(logits_xg.detach(), dim=1)
-
-        return pred_x, loss, loss_pred, loss_con, loss_graph
+        pred_xg = torch.softmax(logits_xg.detach(), dim=1)
+        pred_xf = torch.softmax(logits_xf.detach(), dim=1)
+        return pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph
 
     def forward_train(self, data):
         self.model.train()
@@ -526,19 +580,19 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         if self.config['model']['attention'] == "no":
             self.model.set_mode('pretrain')
             if self.config['model']['mixup'] == 'no':
-                pred_x, loss, loss_pred, loss_con, loss_graph = self.train1_wo_mixup(xl, yl, xu)
+                pred_xf, loss, loss_pred, loss_con, loss_graph = self.train1_wo_mixup(xl, yl, xu)
             elif self.config['model']['mixup'] == 'yes':
-                print("train1_w_mixup")
-                pred_x, loss, loss_pred, loss_con, loss_graph = self.train1(xl, yl, xu)
+                pred_xf, loss, loss_pred, loss_con, loss_graph = self.train1(xl, yl, xu)
+            pred_xg = torch.tensor(0.0, device=self.default_device)
 
         elif self.config['model']['attention'] == "Transformer":
             if self.curr_iter < self.config['train']['pretrain_iters']:
                 self.model.set_mode('pretrain')
                 if self.config['model']['mixup'] =='yes':
-                    pred_x, loss, loss_pred, loss_con, loss_graph = self.train1(xl, yl, xu)
+                    pred_xf, loss, loss_pred, loss_con, loss_graph = self.train1(xl, yl, xu)
                 elif self.config['model']['mixup'] =='no':
-                    print("Train1_wo_mixup")
-                    pred_x, loss, loss_pred, loss_con, loss_graph = self.train1_wo_mixup(xl, yl, xu)
+                    pred_xf, loss, loss_pred, loss_con, loss_graph = self.train1_wo_mixup(xl, yl, xu)
+                pred_xg = torch.tensor(0.0, device=self.default_device)
                 #pred_x, (x1_weak_label's softmax)
                 # loss, (total loss)
                 # loss_pred, (log loss for xl_mixup) loss_con, (log loss for xu_mixup),
@@ -547,20 +601,21 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
                 self.model.set_mode('train')
                 if self.config['model']['mixup'] == 'yes':
                     # self.extract_fp()
-                    pred_x, loss, loss_pred, loss_con, loss_graph = self.train2(xl, yl, xu)
+                    pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.train2(xl, yl, xu)
                 elif self.config['model']['mixup'] == 'no':
-                    pred_x, loss, loss_pred, loss_con, loss_graph = self.train2_wo_mixup(xl, yl, xu)
+                    pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.train2_wo_mixup(xl, yl, xu)
             else:
                 self.model.set_mode('train')
                 # if self.curr_iter % self.config['train']['sample_interval'] == 0:
                 if self.config['model']['mixup'] == 'yes':
                     # self.extract_fp()
-                    pred_x, loss, loss_pred, loss_con, loss_graph = self.train2(xl, yl, xu)
+                    pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.train2(xl, yl, xu)
                 elif self.config['model']['mixup'] == 'no':
                     print("train2_wo_mixup")
-                    pred_x, loss, loss_pred, loss_con, loss_graph = self.train2_wo_mixup(xl, yl, xu)
+                    pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.train2_wo_mixup(xl, yl, xu)
         results = {
-            'y_pred': torch.max(pred_x, dim=1)[1].detach().cpu().numpy(),
+            'y_pred': torch.max(pred_xf, dim=1)[1].detach().cpu().numpy(),
+            'y_pred_agg': torch.max(pred_xg, dim=1)[1].detach().cpu().numpy(),
             'y_true': yl.cpu().numpy(),
             'loss': {
                 'all': loss.detach().cpu().item(),
@@ -588,37 +643,33 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         y = data[1].to(self.default_device)
         if self.config['model']['attention'] == "no":
             self.model.set_mode('pretrain')
-            pred_x, loss, loss_pred, loss_con, loss_graph = self.eval1_wo_mixup(x, y)
+            pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval1_wo_mixup(x, y)
+            pred_xg = torch.tensor(0.0, device=self.default_device)
+
         elif self.config['model']['attention'] == "Transformer":
             if self.curr_iter < self.config['train']['pretrain_iters']:
                 self.model.set_mode('pretrain')
                 if self.config['model']['mixup'] =='yes':
-                    pred_x, loss, loss_pred, loss_con, loss_graph = self.eval1(x, y)
+                    pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval1(x, y)
                 elif self.config['model']['mixup'] =='no':
-                    pred_x, loss, loss_pred, loss_con, loss_graph = self.eval1_wo_mixup(x, y)
+                    pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval1_wo_mixup(x, y)
+                pred_xg = torch.tensor(0.0, device=self.default_device)
             else:
                 if self.config['model']['mixup'] == 'yes':
                     pred_x, loss, loss_pred, loss_con, loss_graph = self.eval2(x,y)
                 elif self.config['model']['mixup'] == 'no':
-                    pred_x, loss, loss_pred, loss_con, loss_graph = self.eval2_wo_mixup(x, y)
-        # if self.curr_iter < self.config['train']['pretrain_iters']:
-        #     self.model.set_mode('pretrain')
-        #     pred_x, loss, loss_pred, loss_con, loss_graph = self.eval1(x, y)
-        # else:
-        #     self.model.set_mode('train')
-        #     pred_x, loss, loss_pred, loss_con, loss_graph = self.eval2(x, y)
-
+                    pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval2_wo_mixup(x, y)
         results = {
-            'y_pred': torch.max(pred_x, dim=1)[1].detach().cpu().numpy(),
+            'y_pred': torch.max(pred_xf, dim=1)[1].detach().cpu().numpy(),
+            'y_pred_agg': torch.max(pred_xg, dim=1)[1].detach().cpu().numpy(),
             'y_true': y.cpu().numpy(),
             'loss': {
                 'all': loss.detach().cpu().item(),
                 'pred': loss_pred.detach().cpu().item(),
                 'con': loss_con.detach().cpu().item(),
                 'graph': loss_graph.detach().cpu().item()
-            }
-        }
-
+                    }
+                }
         return results
 
 

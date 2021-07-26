@@ -12,6 +12,7 @@ import torch
 from torch import optim
 from torch.cuda import amp
 from util import scheduler, metric, misc
+from sklearn.metrics import accuracy_score
 
 
 class Trainer(object):
@@ -123,6 +124,7 @@ class Trainer(object):
                                         max_lr=self.config['train']['lr'],
                                         max_mom=self.config['train']['mom'])
 
+        ##3000 // 150000 // 30000
         total_iters = self.config['train']['pretrain_iters'] + \
                       2 * self.config['train']['cycle_iters'] + \
                       self.config['train']['end_iters']
@@ -260,6 +262,9 @@ class Trainer(object):
                 self.scaler.update()
 
                 # training log
+                # calculate average
+                self.logger_val.add_scalar('acc_agg/', accuracy_score(
+                    np.concatenate(results['y_true'], np.concatenate(results['y_pred'])), self.curr_iter))
                 curr_acc = self.metric.record(results.pop('y_true'), results.pop('y_pred'), clear=True)
                 self.logger_train.add_scalar('acc/', curr_acc, self.curr_iter)
                 for c, results_c in results.items():
@@ -274,7 +279,12 @@ class Trainer(object):
                         for i, data in enumerate(self.dataloader_val):
                             with amp.autocast(enabled=self.args.amp):
                                 results = self.forward_eval(data)
+                            #calculate average
+                            self.logger_val.add_scalar('acc_agg/', accuracy_score(
+                                np.concatenate(results['y_true']), np.concatenate(results['y_pred'])), self.curr_iter)
+                            #remove y_true & y_pred in results(dict)
                             self.metric.record(results.pop('y_true'), results.pop('y_pred'), clear=False)
+
                             for c, results_c in results.items():
                                 for k, v in results_c.items():
                                     self.logger_val.add_scalar(f'{c}/{k}', v, val_iters[i])
