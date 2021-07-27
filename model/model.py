@@ -70,7 +70,7 @@ class AttenHeadX_concat(nn.Module):
 
         return gx
 
-
+# Deprecated
 class AttenHeadX_pos_enc(nn.Module):
     def __init__(self, fdim, d_model, num_heads=8, num_classes=10, scaled=None):
         super().__init__()

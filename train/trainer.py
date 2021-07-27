@@ -164,6 +164,7 @@ class Trainer(object):
                 torch.save(self.root_dir / 'best_ckpt', self.root_dir / 'pretrained_best_3000_ckpt')
         return
 
+    # TODO: 새로운 mode 추가 (test mode)
     def load(self, mode):
         """
         load from checkpoint. supported modes: new, resume, test
@@ -310,6 +311,9 @@ class Trainer(object):
         :return val_acc: validation accuracy
         :return test_acc: testing accuracy
         """
+
+        # FIXME: ckpt에서 val_acc 대신 직접 계산
+        # 2개 val_test, eval1_wo_mixup(target) target acc 기준으로 test, val acc가 얼마인지
         # reload the weights of the best model on val set so far
         self.curr_iter, _, val_acc = self.load('test')
 
