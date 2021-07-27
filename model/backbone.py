@@ -4,7 +4,7 @@ import torch
 from torch import nn
 import torchvision.models as models
 from torch.cuda import amp
-
+import torchsummary as summary
 from .wide_resnet import WideResNet
 from .sslnet import SSLNet
 

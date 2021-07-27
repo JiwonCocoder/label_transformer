@@ -62,12 +62,12 @@ class AttenHeadX_concat(nn.Module):
             proj_fx_scaled = proj_fx * math.sqrt(self.d_model)
             # (in)((bl+bu)*k, 128+num_classes) (out) ((bl+bu)*k, 128)
             proj_fx_scaled = proj_fx_scaled.unsqueeze(0) #(1, (bl+bu)*k, 138)
-            gx = self.transformer_encoder(proj_fx_scaled)
+            fx_delta = self.transformer_encoder(proj_fx_scaled)
         # (in)((bl+bu)*k, 128+num_classes) (out) ((bl+bu)*k, 128)
         elif self.scaled == "no":
             proj_fx = proj_fx.unsqueeze(0) #(1, (bl+bu)*k, 138)
-            gx = self.transformer_encoder(proj_fx)
-
+            fx_delta = self.transformer_encoder(proj_fx)
+        gx = fx_delta + fx
         return gx
 
 # Deprecated
@@ -131,7 +131,7 @@ class FeatMatch(nn.Module):
         self.devices = devices
         self.default_device = torch.device('cuda', devices[0]) if devices is not None else torch.device('cpu')
         fext, self.fdim = make_backbone(backbone)
-        self.detach = detach        
+        self.detach = detach
         print(self.devices)
         self.fext = nn.DataParallel(AmpModel(fext, amp), devices)
         print(attention)
@@ -161,8 +161,11 @@ class FeatMatch(nn.Module):
                 print("transformer_pos_enc")
                 print("========================")                
                 self.atten = AttenHeadX_pos_enc(self.fdim, self.d_model, num_heads, num_classes, scaled)
-        self.clf = nn.Linear(self.fdim, num_classes)
 
+        self.clf = nn.Linear(self.fdim, num_classes)
+        if attention == 'Transformer':
+            for param in self.clf.parameters():
+                param.requires_grad = False
     def set_mode(self, mode):
         self.mode = mode
 
@@ -185,9 +188,8 @@ class FeatMatch(nn.Module):
                 fx = self.extract_feature(x) 
                 #fx(clf_input) : (bs*(k+1), fdim)
                 cls_xf = self.clf(fx)
-                if self.detach == 'yes':
-                    fx = fx.detach()
-                    cls_xf = cls_xf.detach()
+                fx = fx.detach()
+                cls_xf = cls_xf.detach()
                 #cls_xf(clf_out) : (bs*(k+1), num_class)
                 fxg = self.atten(fx, cls_xf)
                 #fxg(atten_out) : (1, bs*(k+1), fdim))
