@@ -499,6 +499,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         prob_fake = prob_fake / prob_fake.sum(dim=1, keepdim=True)
 
         # CLF loss
+        # Between (pseudo-label) and (model output)
         loss_con = loss_pred = self.criterion(None, prob_fake, logits_x, None)
 
         # Graph loss
@@ -545,6 +546,8 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         return pred_x, loss, loss_pred, loss_con, loss_graph
 
     def eval2_wo_mixup(self, x, y):
+        # encoder clf output, transformer clf output
+        # FeatMatch
         logits_xg, logits_xf, fx, fxg = self.model(x)
 
         # Compute pseudo label

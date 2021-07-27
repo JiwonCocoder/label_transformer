@@ -37,6 +37,8 @@ class Trainer(object):
         self.logger_train = SummaryWriter(logdir=self.root_dir/'log'/'train')
         self.logger_val = SummaryWriter(logdir=self.root_dir/'log'/'val')
         self.metric = metric.AccMetric()
+        self.metric_val = metric.AccMetric()
+        self.metric_test = metric.AccMetric()
 
         """
         Append the name of additional variables you want to record.
@@ -179,6 +181,7 @@ class Trainer(object):
             curr_iter, curr_result, best_result = 0, 0.0, 0.0
         elif mode == 'pretrained':
             # ckpt_file = '../pretrained_weights/{}/pretrained_best_ckpt'.format(self.config["data"]["dataset"])
+            # FIXME: change path
             ckpt_file = '/home/ubuntu/label_prop_prev/label_transformer/pretrained_weights/cifar10/pretrained_best_ckpt'
             checkpoint = torch.load(ckpt_file, map_location=self.default_device)
             # target_model = getattr(self, 'model')
@@ -312,16 +315,24 @@ class Trainer(object):
         :return test_acc: testing accuracy
         """
 
-        # FIXME: ckpt에서 val_acc 대신 직접 계산
-        # 2개 val_test, eval1_wo_mixup(target) target acc 기준으로 test, val acc가 얼마인지
+        # TODO: ckpt에서 val_acc 대신 직접 계산
+        # 2개 val_test, eval1_wo_mixup(target): target acc 기준으로 test, val acc가 얼마인지
         # reload the weights of the best model on val set so far
-        self.curr_iter, _, val_acc = self.load('test')
+        self.curr_iter, _, _ = self.load('test') # 3번째 원래 val_acc
 
+        # Calculate Test set accuracy
         with torch.no_grad():
             for _, data in enumerate(self.dataloader_test):
                 with amp.autocast(enabled=self.args.amp):
                     results = self.forward_eval(data)
-                self.metric.record(results['y_true'], results['y_pred'], clear=False)
-        test_acc = self.metric.average(clear=True)
+                self.metric_test.record(results['y_true'], results['y_pred'], clear=False) 
 
+        # Calculate Validation set accuracy
+            for i, data in enumerate(self.dataloader_val):
+                with amp.autocast(enabled=self.args.amp):
+                    results = self.forward_eval(data)
+                self.metric_val.record(results('y_true'), results('y_pred'), clear=False)
+
+        val_acc = self.metric_val.average(clear=True)
+        test_acc = self.metric_test.average(clear=True)
         return val_acc, test_acc
