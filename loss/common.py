@@ -1,3 +1,5 @@
+import pdb
+
 import torch
 from torch.nn import functional as F
 
@@ -9,11 +11,9 @@ def log_loss(logits_p, prob_p, logits_q, prob_q):
     logq = F.log_softmax(logits_q, dim=1) if logits_q is not None else torch.log(prob_q + eps)
     return -torch.mean(torch.sum(prob_p.detach() * logq, dim=1))
 
-def ce_w_hard_labels(logits_p, prob_p, logits_q, prob_q):
-    #
-    prob_p = prob_p if prob_p is not None else F.softmax(logits_p, dim=1)
-    logq = F.log_softmax(logits_q, dim=1) if logits_q is not None else torch.log(prob_q + eps)
-    return -torch.mean(torch.sum(prob_p.detach() * logq, dim=1))
+def hard_ce(logits, targets, mask, reduction = 'none'):
+    loss = F.cross_entropy(logits, targets, reduction=reduction) * mask
+    return torch.mean(loss, dim=-1)
 
 
 def l2_loss(logits_p, prob_p, logits_q, prob_q):

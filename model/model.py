@@ -43,8 +43,8 @@ class AttenHeadX_concat(nn.Module):
         #self.intermediateDim, self.num_layers
         # is based on Attention is All you Need
         self.embFC = nn.Linear(fdim + num_classes, d_model)
-        self.encoder_layer = nn.TransformerEncoderLayer(d_model = d_model, nhead = self.nhead)
-        self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers = self.num_layers)
+        encoder_layer = nn.TransformerEncoderLayer(d_model = d_model, nhead = self.nhead)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers = self.num_layers)
         #Encoder : in(1, S, 138), out(1, S, 138)
         # self.deEmbFC = nn.Linear(self.intermediateDim, fdim)
         '''

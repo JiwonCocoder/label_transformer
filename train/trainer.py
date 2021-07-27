@@ -37,6 +37,8 @@ class Trainer(object):
         self.logger_val = SummaryWriter(logdir=self.root_dir/'log'/'val')
         self.metric = metric.AccMetric()
 
+
+
         """
         Append the name of additional variables you want to record.
         :param state_objs: objects that have a member function of state_dict() such as pytorch model, optimizer, etc.
@@ -235,8 +237,8 @@ class Trainer(object):
         for n, p in named_parameters:
             if (p.requires_grad) and ("bias" not in n):
                 if p.grad is None:
-                    continue
                     print(n, "p.grad is None")
+                    continue
                 writer.add_scalar('gradient_flow/{}'.format(n), p.grad.abs().mean().data.cpu().numpy(), writer_position)
     def forward_train(self, data):
         """
@@ -271,7 +273,6 @@ class Trainer(object):
                 # train update
                 self.scheduler.step(self.curr_iter)
                 self.optimizer.zero_grad()
-
                 with amp.autocast(enabled=self.args.amp):
                     loss, results = self.forward_train(data)
                 self.scaler.scale(loss).backward()
@@ -289,6 +290,7 @@ class Trainer(object):
                 for c, results_c in results.items():
                     for k, v in results_c.items():
                         self.logger_train.add_scalar(f'{c}/{k}', v, self.curr_iter)
+
                 # evaluate trained model
                 if (self.curr_iter + 1) % self.config['train']['update_interval'] == 0 or (self.curr_iter + 1) == self.config['train']['update_interval'] :
                     val_iters = np.linspace(self.curr_iter + 1 - self.config['train']['update_interval'],

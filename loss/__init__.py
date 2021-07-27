@@ -1,1 +1,1 @@
-from .common import log_loss, ce_w_hard_labels, l2_loss, kld_loss, jsd_loss, ent
+from .common import log_loss, hard_ce, l2_loss, kld_loss, jsd_loss, ent
