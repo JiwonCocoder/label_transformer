@@ -12,7 +12,6 @@ import torch
 from torch import optim
 from torch.cuda import amp
 from util import scheduler, metric, misc
-from sklearn.metrics import accuracy_score
 
 
 class Trainer(object):
@@ -178,12 +177,20 @@ class Trainer(object):
             curr_iter, curr_result, best_result = 0, 0.0, 0.0
         elif mode == 'pretrained':
             # ckpt_file = '../pretrained_weights/{}/pretrained_best_ckpt'.format(self.config["data"]["dataset"])
-            ckpt_file = '/home/ubuntu/label_prop_prev/label_transformer/pretrained_weights/cifar10/pretrained_best_ckpt'
+            ckpt_file = '/home/ubuntu/label_prop_prev/label_transformer/pretrained_weights/cifar10/250/best_ckpt'
             checkpoint = torch.load(ckpt_file, map_location=self.default_device)
-            # target_model = getattr(self, 'model')
-            target_model_ext = getattr(self, 'model').fext
-            self.model.fext = target_model_ext
-
+            state_dict = checkpoint['model']
+            state_dict_fext = {}
+            state_dict_cls = {}
+            for k, v in state_dict.items():
+                if k.startswith('fext'):
+                    k = k.replace('fext.', "")
+                    state_dict_fext[k] = v
+                elif k.startswith('clf'):
+                    k = k.replace('clf.', "")
+                    state_dict_cls[k] = v
+            getattr(self, 'model').fext.load_state_dict(state_dict_fext)
+            getattr(self, 'model').clf.load_state_dict(state_dict_cls)
             curr_iter = self.config['train']['pretrain_iters'] + 1
             curr_result = checkpoint['curr_result']
             best_result = checkpoint['best_result']
@@ -197,7 +204,8 @@ class Trainer(object):
                 ckpt_file = self.root_dir / 'curr_ckpt'
                 checkpoint = torch.load(ckpt_file, map_location=self.default_device)
             elif mode == 'test':
-                ckpt_file = self.root_dir / 'best_ckpt'
+                # ckpt_file = self.root_dir / 'best_ckpt'
+                ckpt_file = '/home/ubuntu/label_prop_prev/label_transformer/pretrained_weights/cifar10/pretrained_best_ckpt'
                 checkpoint = torch.load(ckpt_file, map_location=self.default_device)
             else:
                 raise KeyError
@@ -221,6 +229,15 @@ class Trainer(object):
         (self.root_dir / f'{best_result * 100:.2f}').touch()
         return curr_iter, curr_result, best_result
 
+    def writer_grad_flow(self, named_parameters, writer, writer_position):
+        ave_grads = []
+        layers = []
+        for n, p in named_parameters:
+            if (p.requires_grad) and ("bias" not in n):
+                if p.grad is None:
+                    continue
+                    print(n, "p.grad is None")
+                writer.add_scalar('gradient_flow/{}'.format(n), p.grad.abs().mean().data.cpu().numpy(), writer_position)
     def forward_train(self, data):
         """
         Forward pass for training loop
@@ -258,30 +275,31 @@ class Trainer(object):
                 with amp.autocast(enabled=self.args.amp):
                     loss, results = self.forward_train(data)
                 self.scaler.scale(loss).backward()
+                self.writer_grad_flow(self.model.named_parameters(), self.logger_train, self.curr_iter)
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
 
                 # training log
                 # calculate average
-                self.logger_val.add_scalar('acc_agg/', accuracy_score(
-                    np.concatenate(results['y_true'], np.concatenate(results['y_pred'])), self.curr_iter))
+
+                curr_acc_agg = self.metric.record(results['y_true'], results.pop('y_pred_agg'), clear=True)
+                self.logger_train.add_scalar('acc_agg/', curr_acc_agg, self.curr_iter)
                 curr_acc = self.metric.record(results.pop('y_true'), results.pop('y_pred'), clear=True)
                 self.logger_train.add_scalar('acc/', curr_acc, self.curr_iter)
                 for c, results_c in results.items():
                     for k, v in results_c.items():
                         self.logger_train.add_scalar(f'{c}/{k}', v, self.curr_iter)
-
                 # evaluate trained model
                 if (self.curr_iter + 1) % self.config['train']['update_interval'] == 0 or (self.curr_iter + 1) == self.config['train']['update_interval'] :
                     val_iters = np.linspace(self.curr_iter + 1 - self.config['train']['update_interval'],
                                             self.curr_iter + 1, len(self.dataloader_val), endpoint=False, dtype=int)
                     with torch.no_grad():
-                        for i, data in enumerate(self.dataloader_val):
+                        for i, data in enumerate(self.dataloader_test):
                             with amp.autocast(enabled=self.args.amp):
                                 results = self.forward_eval(data)
                             #calculate average
-                            self.logger_val.add_scalar('acc_agg/', accuracy_score(
-                                np.concatenate(results['y_true']), np.concatenate(results['y_pred'])), self.curr_iter)
+                            curr_acc_agg = self.metric.record(results['y_true'], results.pop('y_pred_agg'), clear=True)
+                            self.logger_val.add_scalar('acc_agg/', curr_acc_agg, self.curr_iter)
                             #remove y_true & y_pred in results(dict)
                             self.metric.record(results.pop('y_true'), results.pop('y_pred'), clear=False)
 

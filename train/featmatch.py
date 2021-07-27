@@ -335,7 +335,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         loss_con = self.criterion(None, probu_mix, logits_xgu_mix.reshape(-1,c), None)
 
         # Graph loss
-        loss_graph = self.criterion(None, probu_mix, logits_xfu_mix.reshape(-1,c), None)
+        # loss_graph = self.criterion(None, probu_mix, logits_xfu_mix.reshape(-1,c), None)
 
         # Total loss
         coeff = self.get_consistency_coeff()
@@ -412,6 +412,8 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
 
         # Compute pseudo label(g)
         prob_xgu_fake = torch.softmax(logits_xgu[:, 0].detach(), dim=1)
+        if self.config['loss']['criterion'] =='ce_w_hard_labels':
+            pass
         prob_xgu_fake = prob_xgu_fake ** (1. / self.config['transform']['data_augment']['T'])
         prob_xgu_fake = prob_xgu_fake / prob_xgu_fake.sum(dim=1, keepdim=True)
         prob_xgu_fake = prob_xgu_fake.unsqueeze(1).repeat(1, k, 1)
@@ -446,8 +448,8 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         loss_con = self.criterion(None, prob_xgu_fake, logits_xgu.reshape(-1,c), None)
 
         # Con_f loss
-        loss_graph = self.criterion(None, prob_xgu_fake, logits_xfu.reshape(-1,c), None)
-
+        # loss_graph = self.criterion(None, prob_xgu_fake, logits_xfu.reshape(-1,c), None)
+        loss_graph = torch.tensor(0.0, device=self.default_device)
         # Total loss
         coeff = self.get_consistency_coeff()
         loss = loss_pred + coeff * (self.config['loss']['mix'] * loss_con + self.config['loss']['graph'] * loss_graph)
@@ -540,9 +542,10 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         loss = loss_pred + coeff*(self.config['loss']['mix']*loss_con + self.config['loss']['graph']*loss_graph)
 
         # Prediction
-        pred_x = torch.softmax(logits_xg.detach(), dim=1)
+        pred_xf = torch.softmax(logits_xf.detach(), dim=1)
+        pred_xg = torch.softmax(logits_xg.detach(), dim=1)
 
-        return pred_x, loss, loss_pred, loss_con, loss_graph
+        return pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph
 
     def eval2_wo_mixup(self, x, y):
         logits_xg, logits_xf, fx, fxg = self.model(x)
@@ -612,7 +615,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
                     pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.train2(xl, yl, xu)
                 elif self.config['model']['mixup'] == 'no':
                     print("train2_wo_mixup")
-                    pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.train2_wo_mixup(xl, yl, xu)
+                    pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self. train2_wo_mixup(xl, yl, xu)
         results = {
             'y_pred': torch.max(pred_xf, dim=1)[1].detach().cpu().numpy(),
             'y_pred_agg': torch.max(pred_xg, dim=1)[1].detach().cpu().numpy(),
@@ -656,7 +659,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
                 pred_xg = torch.tensor(0.0, device=self.default_device)
             else:
                 if self.config['model']['mixup'] == 'yes':
-                    pred_x, loss, loss_pred, loss_con, loss_graph = self.eval2(x,y)
+                    pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval2(x,y)
                 elif self.config['model']['mixup'] == 'no':
                     pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval2_wo_mixup(x, y)
         results = {
