@@ -4,8 +4,12 @@ from termcolor import cprint
 import math
 from sklearn.cluster import KMeans
 import torch
+import torch.nn as nn
 import matplotlib
 import pdb
+
+from torch._C import T
+from torch.cuda import device
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
@@ -485,8 +489,12 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         #fast debugging
 
         #hyper_params for update
-        T = self.t_fn(self.curr_iter)
-        p_cutoff = self.p_fn(self.curr_iter)
+        # T = self.t_fn(self.curr_iter)
+        # p_cutoff = self.p_fn(self.curr_iter)
+        T_origin = torch.tensor(0.5, dtype=torch.float32, device=self.default_device, requires_grad=True)
+        T = nn.Threshold(T_origin, 1.0)
+        p_cutoff_origin = torch.tensor(0.95, dtype=torch.float32, device=self.default_device, requires_grad=True)
+        p_cutoff = nn.Threshold(p_cutoff_origin, 1.0)
         #(train1: T, p_cutoff revision is requiring)
         #for debuging training stage#
         if self.config['model']['attention'] == "no":

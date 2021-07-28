@@ -1,5 +1,6 @@
 data/
-config/
+config/cifar10_zca.npz
+config/cifar10/\[*.json
 dataset/
 weights/
 run1.sh
