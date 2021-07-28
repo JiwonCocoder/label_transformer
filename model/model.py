@@ -164,7 +164,7 @@ class FeatMatch(nn.Module):
                 self.atten = AttenHeadX_pos_enc(self.fdim, self.d_model, num_heads, num_classes, scaled)
 
         self.clf = nn.Linear(self.fdim, num_classes)
-        if self.mode == 'train':
+        if self.mode == 'pretrained':
             for param in self.clf.parameters():
                 param.requires_grad = False
     def set_mode(self, mode):

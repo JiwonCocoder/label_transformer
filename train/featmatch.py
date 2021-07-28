@@ -18,6 +18,24 @@ from util import misc, metric
 from util.command_interface import command_interface
 from util.reporter import Reporter
 from pathlib import Path
+from torch.nn import functional as F
+
+def ce_loss_check(logits_p, prob_p, target_index, target_with_class, mask=None):
+    if mask == None:
+        mask = torch.ones(len(prob_p), device=prob_p.device).unsqueeze(1)
+
+    print(target_index.shape, target_with_class.shape)
+    print(mask.shape)
+    print(target_index[0:9], target_with_class[0:9])
+    print(mask[0:9])
+    temp = F.cross_entropy(logits_p, target_index, reduction='none') * mask.detach()
+    temp2 = (target_with_class * -torch.log(F.softmax(logits_p, dim=1))).sum(dim=1) * mask.detach()
+    temp_mean = torch.mean(temp)
+    temp2_mean = torch.mean(temp2)
+    print(temp_mean, temp_mean)
+    pdb.set_trace()
+
+    return temp_mean
 class Get_Scalar:
     def __init__(self, value):
         self.value = value
@@ -42,6 +60,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
             self.hard_labels = False
 
         self.criterion = getattr(common, self.config['loss']['criterion'])
+        self.hard_ce = getattr(common, 'hard_ce')
         self.attr_objs.extend(['fu', 'pu', 'fp', 'yp', 'lp'])
         self.load(args.mode)
         self.mode = args.mode
@@ -97,6 +116,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
 
         # Compute pseudo label
         prob_xu_fake = torch.softmax(logits_xu[:, 0].detach(), dim=1)
+
         # ex. (128, 10)
         #temperature smaller, difference between softmax is bigger
         # temperature bigger, difference between softmax is smaller
@@ -302,115 +322,125 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         logits_xgl, logits_xgu = logits_xg[:bsl], logits_xg[bsl:]
         logits_xfl, logits_xfu = logits_xf[:bsl], logits_xf[bsl:]
 
-        xl = xl.reshape(-1, *xl.shape[2:])
-        prob_xl_gt = torch.zeros(len(xl), c, device=xl.device)
-        prob_xl_gt.scatter_(dim=1, index=yl.unsqueeze(1).repeat(1, k).reshape(-1, 1), value=1.)
-        loss_pred = self.criterion(None, prob_xl_gt, logits_xgl.reshape(-1,c), None)
+        if self.hard_labels:
+            target_xgl_1D = yl.unsqueeze(1).repeat(1, k).reshape(-1)
+            loss_sup_g = self.hard_ce(logits_xgl.reshape(-1,c), target_xgl_1D)
+        else:
+            target_xgl_2D = torch.zeros(len(xl), c, device=xl.device)
+            target_xgl_2D.scatter_(dim=1, index=yl.unsqueeze(1).repeat(1, k).reshape(-1, 1), value=1.)
+            loss_sup_g = self.criterion(None, target_xgl_2D, logits_xgl.reshape(-1, c), None)
 
+        #Unlabeled#
+        # [Hard & Soft]
         # Compute pseudo label(g)
         prob_xgu_weak = torch.softmax(logits_xgu[:, 0].detach(), dim=1)
-        # prob_xgu_fake : torch.Size([128, 10])
+        #Generate mask (g)
+        max_xgu_probs, max_xgu_idx = torch.max(prob_xgu_weak, dim=1)  # bu
+        mask_xgu =max_xgu_idx.ge(p_cutoff).float()  # bu
+        mask_xgu = mask_xgu.unsqueeze(1).repeat(1, k).reshape(-1)
+        #Prediction-logit(g & f)
+        logits_xgu = logits_xgu.reshape(-1, c)
+        logits_xfu = logits_xfu.reshape(-1, c)
 
         # reference: https://github.com/LeeDoYup/FixMatch-pytorch/blob/0f22e7f7c63396e0a0839977ba8101f0d7bf1b04/models/fixmatch/fixmatch_utils.py
         if self.hard_labels:
-            max_probs, max_idx = torch.max(prob_xgu_weak, dim=1)  # bu
+            #pseudo_labeling
+            #target:(bsu*k, c)
+            # target_xgu_2D = torch.zeros(bsu*k, c, device=xu.device)
+            # target_xgu_2D.scatter_(dim=1, index=max_xgu_idx.unsqueeze(1).repeat(1, k).reshape(-1, 1), value=1.)
 
-            mask = max_probs.ge(p_cutoff).float()  # bu
+            #(target_xgu_1D, mask) : bsu
+            target_xgu_1D = max_xgu_idx.unsqueeze(1).repeat(1, k).reshape(-1)
+            #(prev)loss_con
+            loss_con_g = self.hard_ce(logits_xgu, target_xgu_1D, mask_xgu)
+            # (prev) Graph loss
+            loss_con_f = torch.tensor(0.0, device=self.default_device)
 
-            prob_xgu_fake = torch.zeros(bsu * k, c, device=xl.device)
-            # prob_xgu_fake.shape : torch.Size([576, 10])
-            prob_xgu_fake.scatter_(dim=1, index=max_idx.unsqueeze(1).repeat(1, k).reshape(-1, 1), value=1.)
-            # logits_s(strong_logits), max_idx(pseudo_label)
-            loss_con = self.criterion(None, logits_xgu.reshape(-1, c), prob_xgu_fake, mask)
-            loss_graph = self.criterion(None, logits_xfu.reshape(-1, c), prob_xgu_fake, mask)
         else:
-            # prob_xgu_fake = prob_xgu_fake ** (1. / self.config['transform']['data_augment']['T'])
-            prob_xgu_weak = prob_xgu_weak ** (1. / T)
-            prob_xgu_weak = prob_xgu_weak / prob_xgu_weak.sum(dim=1, keepdim=True)
-            prob_xgu_fake = prob_xgu_weak.unsqueeze(1).repeat(1, k, 1)
-            loss_con = self.criterion(None, prob_xgu_fake, logits_xgu.reshape(-1, c), None)
-            loss_graph = self.criterion(None, prob_xgu_fake, logits_xfu.reshape(-1, c), None)
+            #To check softmax_temperature value#
+            # prob_xgu_weak = prob_xgu_weak ** (1. / T)
+            # prob_xgu_weak = prob_xgu_weak / prob_xgu_weak.sum(dim=1, keepdim=True)
+            prob_xgu_with_T = torch.softmax(prob_xgu_weak/T, dim = -1)
+            prob_xgu_with_T = prob_xgu_with_T.unsqueeze(1).repeat(1, k, 1).reshape(-1, c)
 
-        # Compute pseudo label(f)
-        # prob_xfu_fake = prob_xfu_fake ** (1. / self.config['transform']['data_augment']['T'])
-        # prob_xfu_fake = prob_xfu_fake / prob_xfu_fake.sum(dim=1, keepdim=True)
-        # prob_xfu_fake = prob_xfu_fake.unsqueeze(1).repeat(1, k, 1)
-        # pdb.set_trace()
+            loss_con_g = self.criterion(None, prob_xgu_with_T, logits_xgu.reshape(-1, c), None, mask_xgu)
+            loss_con_f = self.criterion(None, prob_xgu_with_T, logits_xfu.reshape(-1, c), None, mask_xgu)
 
-        # Mixup perturbation
-        # xu = xu.reshape(-1, *xu.shape[2:])
         # Total loss
         coeff = self.get_consistency_coeff()
-        loss = loss_pred + coeff * (self.config['loss']['mix'] * loss_con + self.config['loss']['graph'] * loss_graph)
+        loss = loss_sup_g + coeff * (self.config['loss']['mix'] * loss_con_g + self.config['loss']['graph'] * loss_con_f)
 
         # Prediction
         pred_xg = torch.softmax(logits_xgl[:, 0].detach(), dim=1)
         pred_xf = torch.softmax(logits_xfl[:, 0].detach(), dim=1)
 
-        return pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph
+        return pred_xg, pred_xf, loss, loss_sup_g, loss_con_g, loss_con_f
 
     def finetune_wo_mixup(self, xl, yl, xu, T, p_cutoff):
         bsl, bsu, k, c = len(xl), len(xu), xl.size(1), self.config['model']['classes']
         x = torch.cat([xl, xu], dim=0).reshape(-1, *xl.shape[2:])
         logits_xg, logits_xf, fx, fxg = self.model(x)
-
         logits_xg = logits_xg.reshape(bsl + bsu, k, c)
         logits_xf = logits_xf.reshape(bsl + bsu, k, c)
-        # (common) logit.shape : torch.Size([192, 9, 10])
 
         logits_xgl, logits_xgu = logits_xg[:bsl], logits_xg[bsl:]
         logits_xfl, logits_xfu = logits_xf[:bsl], logits_xf[bsl:]
-        # (common) logits_xgl, logits_xfl : torch.Size([64, 9, 10])
-        # (common) logits_xgu, logits_xfu : torch.Size([128, 9, 10])
 
-        xl = xl.reshape(-1, *xl.shape[2:])
-        prob_xl_gt = torch.zeros(len(xl), c, device=xl.device)
-        prob_xl_gt.scatter_(dim=1, index=yl.unsqueeze(1).repeat(1, k).reshape(-1, 1), value=1.)
-        # prob_xl_gt.shape : torch.Size([576, 10])
-        # CLF1 loss
-        loss_pred = self.criterion(None, prob_xl_gt, logits_xgl.reshape(-1,c), None)
+        # target#
+        # target:(bsl*k, c)
 
+        if self.hard_labels:
+            target_xgl_1D = yl.unsqueeze(1).repeat(1, k).reshape(-1)
+            loss_sup_g = self.hard_ce(logits_xgl.reshape(-1,c), target_xgl_1D)
+        else:
+            target_xgl_2D = torch.zeros(len(xl), c, device=xl.device)
+            target_xgl_2D.scatter_(dim=1, index=yl.unsqueeze(1).repeat(1, k).reshape(-1, 1), value=1.)
+            loss_sup_g = self.criterion(None, target_xgl_2D, logits_xgl.reshape(-1, c), None)
+
+        # [Hard & Soft]
         # Compute pseudo label(g)
         prob_xgu_weak = torch.softmax(logits_xgu[:, 0].detach(), dim=1)
-        # prob_xgu_fake : torch.Size([128, 10])
+        # Generate mask (g)
+        max_xgu_probs, max_xgu_idx = torch.max(prob_xgu_weak, dim=1)  # bu
+        mask_xgu = max_xgu_idx.ge(p_cutoff).float()  # bu
+        mask_xgu = mask_xgu.unsqueeze(1).repeat(1, k).reshape(-1)
+        # Prediction-logit(g & f)
+        logits_xgu = logits_xgu.reshape(-1, c)
+        logits_xfu = logits_xfu.reshape(-1, c)
 
-        #reference: https://github.com/LeeDoYup/FixMatch-pytorch/blob/0f22e7f7c63396e0a0839977ba8101f0d7bf1b04/models/fixmatch/fixmatch_utils.py
+        # reference: https://github.com/LeeDoYup/FixMatch-pytorch/blob/0f22e7f7c63396e0a0839977ba8101f0d7bf1b04/models/fixmatch/fixmatch_utils.py
         if self.hard_labels:
-            max_probs, max_idx = torch.max(prob_xgu_weak, dim=1) #bu
+            # pseudo_labeling
+            # target:(bsu*k, c)
+            # target_xgu_2D = torch.zeros(bsu*k, c, device=xu.device)
+            # target_xgu_2D.scatter_(dim=1, index=max_xgu_idx.unsqueeze(1).repeat(1, k).reshape(-1, 1), value=1.)
 
-            mask = max_probs.ge(p_cutoff).float() #bu
+            # (target_xgu_1D, mask) : bsu
+            target_xgu_1D = max_xgu_idx.unsqueeze(1).repeat(1, k).reshape(-1)
+            # (prev)locc_con
+            loss_con_g = self.hard_ce(logits_xgu, target_xgu_1D, mask_xgu)
+            loss_con_f = self.hard_ce(logits_xfu, target_xgu_1D, mask_xgu)
 
-            prob_xgu_fake = torch.zeros(bsu*k, c, device=xl.device)
-            # prob_xgu_fake.shape : torch.Size([576, 10])
-            prob_xgu_fake.scatter_(dim=1, index=max_idx.unsqueeze(1).repeat(1, k).reshape(-1, 1), value=1.)
-            #logits_s(strong_logits), max_idx(pseudo_label)
-            loss_con = self.criterion(None, logits_xgu.reshape(-1,c), prob_xgu_fake, mask)
-            loss_graph = self.criterion(None, logits_xfu.reshape(-1,c), prob_xgu_fake, mask)
         else:
-            # prob_xgu_fake = prob_xgu_fake ** (1. / self.config['transform']['data_augment']['T'])
-            prob_xgu_weak = prob_xgu_weak ** (1. / T)
-            prob_xgu_weak = prob_xgu_weak / prob_xgu_weak.sum(dim=1, keepdim=True)
-            prob_xgu_fake = prob_xgu_weak.unsqueeze(1).repeat(1, k, 1)
-            loss_con = self.criterion(None, prob_xgu_fake, logits_xgu.reshape(-1,c), None)
-            loss_graph = self.criterion(None, prob_xgu_fake, logits_xfu.reshape(-1,c), None)
+            # To check softmax_temperature value#
+            # prob_xgu_weak = prob_xgu_weak ** (1. / T)
+            # prob_xgu_weak = prob_xgu_weak / prob_xgu_weak.sum(dim=1, keepdim=True)
+            prob_xgu_with_T = torch.softmax(prob_xgu_weak / T, dim=-1)
+            prob_xgu_with_T = prob_xgu_with_T.unsqueeze(1).repeat(1, k, 1).reshape(-1, c)
 
-        # Compute pseudo label(f)
-        # prob_xfu_fake = prob_xfu_fake ** (1. / self.config['transform']['data_augment']['T'])
-        # prob_xfu_fake = prob_xfu_fake / prob_xfu_fake.sum(dim=1, keepdim=True)
-        # prob_xfu_fake = prob_xfu_fake.unsqueeze(1).repeat(1, k, 1)
-        # pdb.set_trace()
+            loss_con_g = self.criterion(None, prob_xgu_with_T, logits_xgu.reshape(-1, c), None, mask_xgu)
+            loss_con_f = self.criterion(None, prob_xgu_with_T, logits_xfu.reshape(-1, c), None, mask_xgu)
 
-        # Mixup perturbation
-        # xu = xu.reshape(-1, *xu.shape[2:])
         # Total loss
         coeff = self.get_consistency_coeff()
-        loss = loss_pred + coeff * (self.config['loss']['mix'] * loss_con + self.config['loss']['graph'] * loss_graph)
+        loss = loss_sup_g + coeff * (
+                    self.config['loss']['mix'] * loss_con_g + self.config['loss']['graph'] * loss_con_f)
 
         # Prediction
         pred_xg = torch.softmax(logits_xgl[:, 0].detach(), dim=1)
         pred_xf = torch.softmax(logits_xfl[:, 0].detach(), dim=1)
 
-        return pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph
+        return pred_xg, pred_xf, loss, loss_sup_g, loss_con_g, loss_con_f
 
 
     def eval1(self, x, y):
@@ -605,7 +635,6 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
     def forward_finetune(self, data):
         self.model.train()
         xl = data[0].reshape(-1, *data[0].shape[2:])
-        pdb.set_trace()
         xl = self.Tnorm(xl.to(self.default_device)).reshape(data[0].shape)
 
         yl = data[1].to(self.default_device)
