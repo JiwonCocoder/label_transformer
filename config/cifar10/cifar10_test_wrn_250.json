@@ -37,7 +37,8 @@
   {
     "mix": 0.5,
     "graph": 2.0,
-    "criterion": "log_loss"
+    "criterion": "log_loss",
+    "hard_labels": "yes"
   },
 
   "train":

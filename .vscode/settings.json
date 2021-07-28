@@ -19,5 +19,12 @@
             "borderRadius": "2px", //NOTE: using borderRadius along with `border` or you will see nothing change
             "backgroundColor": "rgba(255,255,255)",
             //other styling properties goes here ... 
-        }]
+        },
+        {
+            "text": "# Deprecated",
+            "color": "yellow",
+            "border": "1px solid red",
+            "backgroundColor": "grey"
+        }
+    ]
 }

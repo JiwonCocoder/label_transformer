@@ -86,8 +86,8 @@ class AttenHeadX_pos_enc(nn.Module):
             print("fdim {} is not same as d_model {}". format(str(self.fdim), str(self.d_model)))
             self.embFC_feat = nn.Linear(self.fdim, self.d_model)
         self.embFC_class = nn.Linear(num_classes, self.d_model)
-        self.encoder_layer = nn.TransformerEncoderLayer(d_model=self.d_model, nhead=self.nhead)
-        self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=self.num_layers)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=self.d_model, nhead=self.nhead)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=self.num_layers)
         # Encoder : in(1, S, 138), out(1, S, 138)
         # self.deEmbFC = nn.Linear(self.intermediateDim, fdim)
         '''
