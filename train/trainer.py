@@ -1,5 +1,5 @@
 import pdb
-
+import os.path
 import numpy as np
 import git
 from tqdm import tqdm
@@ -32,9 +32,14 @@ class Trainer(object):
         self.model = self.init_model().to(self.default_device)
         self.optimizer = self.init_optimizer()
         self.scheduler, self.total_iters = self.init_scheduler()
-
+        '''
+        (future_work) logger_train / logger_val is continual for all pretraining/traine/fine_tuning stage
+        '''
         self.logger_train = SummaryWriter(logdir=self.root_dir/'log'/'train')
         self.logger_val = SummaryWriter(logdir=self.root_dir/'log'/'val')
+        self.logger_finetune_train =SummaryWriter(logdir=self.root_dir/'log'/'finetune_train')
+        self.logger_finetune_val =SummaryWriter(logdir=self.root_dir/'log'/'finetune_val')
+
         self.metric = metric.AccMetric()
 
 
@@ -193,6 +198,7 @@ class Trainer(object):
                     state_dict_cls[k] = v
             getattr(self, 'model').fext.load_state_dict(state_dict_fext)
             getattr(self, 'model').clf.load_state_dict(state_dict_cls)
+
             curr_iter = self.config['train']['pretrain_iters'] + 1
             curr_result = checkpoint['curr_result']
             best_result = checkpoint['best_result']
@@ -201,6 +207,25 @@ class Trainer(object):
                    f'best result = {checkpoint["best_result"]*100:.2f} %,'
                    f'but curr_iter = {curr_iter}',
                    color='blue', attrs=['bold'])
+        elif mode == 'finetune':
+            # ckpt_file = '../pretrained_weights/{}/pretrained_best_ckpt'.format(self.config["data"]["dataset"])
+            ckpt_position = f'{self.args.name}/run0/best_ckpt'
+            ckpt_file = os.path.join('weights', ckpt_position)
+            checkpoint = torch.load(ckpt_file, map_location=self.default_device)
+            getattr(self, 'model').load_state_dict(checkpoint['model'])
+            self.scaler.load_state_dict(checkpoint["amp"])
+            curr_iter = (self.total_iters - self.config['train']['end_iters']) -1
+            curr_result = checkpoint['curr_result']
+            best_result = checkpoint['best_result']
+            '''
+            kyuseong_test_code
+            '''
+            cprint(f'Load from iteration [{checkpoint["last_iter"]}], '
+                   f'with current result = {checkpoint["curr_result"] * 100:.2f} %, '
+                   f'best result = {checkpoint["best_result"] * 100:.2f} %',
+                   color='blue', attrs=['bold'])
+            (self.root_dir / f'fine_tuning_start_accuracy_{best_result * 100:.2f}').touch()
+
         else:
             if mode == 'resume':
                 ckpt_file = self.root_dir / 'curr_ckpt'
@@ -257,6 +282,80 @@ class Trainer(object):
         :return results: dict of results. key: str. name; val: float. value
         """
         raise NotImplementedError
+
+    def forward_finetune(self, data):
+        """
+        forward pass for evaluation loop
+        :param data: batch of data from the DataLoader
+        :return loss: torch float tensor of scalar. total loss for optimization
+        :return results: dict of results. key: str. name; val: float. value
+        """
+        raise NotImplementedError
+    def finetune(self):
+        """
+         Starting point of training and validation.
+         :return best_result: best validation result.
+         """
+        pbar = tqdm(total=self.total_iters, initial=self.curr_iter, dynamic_ncols=True)
+
+        while self.curr_iter < self.total_iters:
+            for _, data in enumerate(self.dataloader_train):
+                if not (self.curr_iter < self.total_iters):
+                    break
+
+                # train update
+                self.scheduler.step(self.curr_iter)
+                self.optimizer.zero_grad()
+                with amp.autocast(enabled=self.args.amp):
+                    loss, results = self.forward_finetune(data)
+                self.scaler.scale(loss).backward()
+                self.writer_grad_flow(self.model.named_parameters(), self.logger_train, self.curr_iter)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+
+                # training log
+                # calculate average
+
+                curr_acc_agg = self.metric.record(results['y_true'], results.pop('y_pred_agg'), clear=True)
+                self.logger_train.add_scalar('acc_agg/', curr_acc_agg, self.curr_iter)
+                curr_acc = self.metric.record(results.pop('y_true'), results.pop('y_pred'), clear=True)
+                self.logger_train.add_scalar('acc/', curr_acc, self.curr_iter)
+                for c, results_c in results.items():
+                    for k, v in results_c.items():
+                        self.logger_train.add_scalar(f'{c}/{k}', v, self.curr_iter)
+
+                # evaluate trained model
+                if (self.curr_iter + 1) % self.config['train']['update_interval'] == 0 or (self.curr_iter + 1) == \
+                        self.config['train']['update_interval']:
+                    val_iters = np.linspace(self.curr_iter + 1 - self.config['train']['update_interval'],
+                                            self.curr_iter + 1, len(self.dataloader_val), endpoint=False, dtype=int)
+                    with torch.no_grad():
+                        for i, data in enumerate(self.dataloader_test):
+                            with amp.autocast(enabled=self.args.amp):
+                                results = self.forward_eval(data)
+                            # calculate average
+                            curr_acc_agg = self.metric.record(results['y_true'], results.pop('y_pred_agg'), clear=True)
+                            self.logger_val.add_scalar('acc_agg/', curr_acc_agg, self.curr_iter)
+                            # remove y_true & y_pred in results(dict)
+                            self.metric.record(results.pop('y_true'), results.pop('y_pred'), clear=False)
+
+                            for c, results_c in results.items():
+                                for k, v in results_c.items():
+                                    self.logger_val.add_scalar(f'{c}/{k}', v, val_iters[i])
+                    self.curr_result = self.metric.average(clear=True)
+                    self.logger_val.add_scalar('acc/', self.curr_result, self.curr_iter)
+                    self.save()
+
+                # update training status
+                self.curr_iter += 1
+                pbar.update()
+
+        pbar.close()
+        self.logger_train.export_scalars_to_json(self.logger_train.logdir / 'train.json')
+        self.logger_val.export_scalars_to_json(self.logger_val.logdir / 'val.json')
+
+        return self.best_result
+
 
     def train(self):
         """
@@ -323,6 +422,71 @@ class Trainer(object):
         self.logger_val.export_scalars_to_json(self.logger_val.logdir/'val.json')
 
         return self.best_result
+
+    def finetune(self):
+        """
+        Starting point of training and validation.
+        :return best_result: best validation result.
+        """
+        pbar = tqdm(total=self.total_iters, initial=self.curr_iter, dynamic_ncols=True)
+        while self.curr_iter < self.total_iters:
+            for _, data in enumerate(self.dataloader_train):
+                if not (self.curr_iter < self.total_iters):
+                    break
+
+                # train update
+                self.scheduler.step(self.curr_iter)
+                self.optimizer.zero_grad()
+                with amp.autocast(enabled=self.args.amp):
+                    loss, results = self.forward_finetune(data)
+                self.scaler.scale(loss).backward()
+                self.writer_grad_flow(self.model.named_parameters(), self.logger_finetune_train, self.curr_iter)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+
+                # training log
+                # calculate average
+
+                curr_acc_agg = self.metric.record(results['y_true'], results.pop('y_pred_agg'), clear=True)
+                self.logger_finetune_train.add_scalar('acc_agg/', curr_acc_agg, self.curr_iter)
+                curr_acc = self.metric.record(results.pop('y_true'), results.pop('y_pred'), clear=True)
+                self.logger_finetune_train.add_scalar('acc/', curr_acc, self.curr_iter)
+                for c, results_c in results.items():
+                    for k, v in results_c.items():
+                        self.logger_finetune_train.add_scalar(f'{c}/{k}', v, self.curr_iter)
+                # evaluate trained model
+                if (self.curr_iter + 1) % self.config['train']['update_interval'] == 0 or (self.curr_iter + 1) == self.config['train']['update_interval'] :
+                    val_iters = np.linspace(self.curr_iter + 1 - self.config['train']['update_interval'],
+                                            self.curr_iter + 1, len(self.dataloader_val), endpoint=False, dtype=int)
+                    with torch.no_grad():
+                        for i, data in enumerate(self.dataloader_test):
+                            with amp.autocast(enabled=self.args.amp):
+                                results = self.forward_finetune(data)
+                            #calculate average
+                            curr_acc_agg = self.metric.record(results['y_true'], results.pop('y_pred_agg'), clear=True)
+                            self.logger_finetune_val.add_scalar('acc_agg/', curr_acc_agg, self.curr_iter)
+                            #remove y_true & y_pred in results(dict)
+                            self.metric.record(results.pop('y_true'), results.pop('y_pred'), clear=False)
+
+                            for c, results_c in results.items():
+                                for k, v in results_c.items():
+                                    self.logger_finetune_val.add_scalar(f'{c}/{k}', v, val_iters[i])
+                    self.curr_result = self.metric.average(clear=True)
+                    self.logger_finetune_val.add_scalar('acc/', self.curr_result, self.curr_iter)
+                    self.save()
+                    pdb.set_trace()
+
+
+                # update training status
+                self.curr_iter += 1
+                pbar.update()
+
+        pbar.close()
+        self.logger_train.export_scalars_to_json(self.logger_train.logdir/'train.json')
+        self.logger_val.export_scalars_to_json(self.logger_val.logdir/'val.json')
+
+        return self.best_result
+
 
     def test(self):
         """
