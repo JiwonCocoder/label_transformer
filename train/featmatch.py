@@ -44,6 +44,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         self.criterion = getattr(common, self.config['loss']['criterion'])
         self.attr_objs.extend(['fu', 'pu', 'fp', 'yp', 'lp'])
         self.load(args.mode)
+        self.mode = args.mode
 
     def init_model(self):
         model = FeatMatch(backbone=self.config['model']['backbone'],
@@ -56,7 +57,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
                           label_prop = self.config['model']['label_prop'],
                           detach = self.config['model']['detach'],
                           scaled = self.config['model']['scaled'],
-                          mode = args.mode
+                          mode = self.args.mode
                           )
         print(f'Use [{self.config["model"]["backbone"]}] model with [{misc.count_n_parameters(model):,}] parameters')
         return model
@@ -301,29 +302,36 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         logits_xgl, logits_xgu = logits_xg[:bsl], logits_xg[bsl:]
         logits_xfl, logits_xfu = logits_xf[:bsl], logits_xf[bsl:]
 
+        xl = xl.reshape(-1, *xl.shape[2:])
+        prob_xl_gt = torch.zeros(len(xl), c, device=xl.device)
+        prob_xl_gt.scatter_(dim=1, index=yl.unsqueeze(1).repeat(1, k).reshape(-1, 1), value=1.)
+        loss_pred = self.criterion(None, prob_xl_gt, logits_xgl.reshape(-1,c), None)
+
         # Compute pseudo label(g)
-        prob_xgu_fake = torch.softmax(logits_xgu[:, 0].detach(), dim=1)
-        #reference: https://github.com/LeeDoYup/FixMatch-pytorch/blob/0f22e7f7c63396e0a0839977ba8101f0d7bf1b04/models/fixmatch/fixmatch_utils.py
-        if self.config['loss']['hard_labels'] =="yes":
-            max_probs, max_idx = torch.max(prob_xgu_fake, dim=1) #bu
-            mask = max_probs.ge(p_cutoff).float() #bu
+        prob_xgu_weak = torch.softmax(logits_xgu[:, 0].detach(), dim=1)
+        # prob_xgu_fake : torch.Size([128, 10])
 
-            max_idx = max_idx.unsqueeze(1).repeat(1, k) #bu,k
-            mask = mask.unsqueeze(1).repeat(1, k) #bu,k
-            prob_xgu_fake = prob_xgu_fake.unsqueeze(1).repeat(1, k, 1) #(bu, k, c)
+        # reference: https://github.com/LeeDoYup/FixMatch-pytorch/blob/0f22e7f7c63396e0a0839977ba8101f0d7bf1b04/models/fixmatch/fixmatch_utils.py
+        if self.hard_labels:
+            max_probs, max_idx = torch.max(prob_xgu_weak, dim=1)  # bu
 
-            #logits_s(strong_logits), max_idx(pseudo_label)
-            loss_con = self.criterion_con(prob_xgu_fake.reshape(-1,c), max_idx.reshape(-1), mask.reshape(-1))
+            mask = max_probs.ge(p_cutoff).float()  # bu
 
-        elif self.config['loss']['hard_labels'] == 'no':
+            prob_xgu_fake = torch.zeros(bsu * k, c, device=xl.device)
+            # prob_xgu_fake.shape : torch.Size([576, 10])
+            prob_xgu_fake.scatter_(dim=1, index=max_idx.unsqueeze(1).repeat(1, k).reshape(-1, 1), value=1.)
+            # logits_s(strong_logits), max_idx(pseudo_label)
+            loss_con = self.criterion(None, logits_xgu.reshape(-1, c), prob_xgu_fake, mask)
+            loss_graph = self.criterion(None, logits_xfu.reshape(-1, c), prob_xgu_fake, mask)
+        else:
             # prob_xgu_fake = prob_xgu_fake ** (1. / self.config['transform']['data_augment']['T'])
-            prob_xgu_fake = prob_xgu_fake ** (1. / T)
-            prob_xgu_fake = prob_xgu_fake / prob_xgu_fake.sum(dim=1, keepdim=True)
-            prob_xgu_fake = prob_xgu_fake.unsqueeze(1).repeat(1, k, 1)
-            loss_con = self.criterion_con(None, prob_xgu_fake, logits_xgu.reshape(-1,c), None)
+            prob_xgu_weak = prob_xgu_weak ** (1. / T)
+            prob_xgu_weak = prob_xgu_weak / prob_xgu_weak.sum(dim=1, keepdim=True)
+            prob_xgu_fake = prob_xgu_weak.unsqueeze(1).repeat(1, k, 1)
+            loss_con = self.criterion(None, prob_xgu_fake, logits_xgu.reshape(-1, c), None)
+            loss_graph = self.criterion(None, prob_xgu_fake, logits_xfu.reshape(-1, c), None)
 
         # Compute pseudo label(f)
-        # prob_xfu_fake = torch.softmax(logits_xfu[:, 0].detach(), dim=1)
         # prob_xfu_fake = prob_xfu_fake ** (1. / self.config['transform']['data_augment']['T'])
         # prob_xfu_fake = prob_xfu_fake / prob_xfu_fake.sum(dim=1, keepdim=True)
         # prob_xfu_fake = prob_xfu_fake.unsqueeze(1).repeat(1, k, 1)
@@ -331,27 +339,6 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
 
         # Mixup perturbation
         # xu = xu.reshape(-1, *xu.shape[2:])
-        xl = xl.reshape(-1, *xl.shape[2:])
-        prob_xl_gt = torch.zeros(len(xl), c, device=xl.device)
-        prob_xl_gt.scatter_(dim=1, index=yl.unsqueeze(1).repeat(1, k).reshape(-1, 1), value=1.)
-        # xl_mix, probl_mix, xu_mix, probu_mix = self.data_mixup(xl, prob_xl_gt, xu, prob_xfu_fake.reshape(-1, c))
-        #
-        # # Forward pass on mixed data
-        # Nl = len(xl_mix)
-        # x_mix = torch.cat([xl_mix, xu_mix], dim=0)
-        # logits_xg_mix, logits_xf_mix, _, _, _ = self.model(x_mix, self.fp)
-        # logits_xgl_mix, logits_xgu_mix = logits_xg_mix[:Nl], logits_xg_mix[Nl:]
-        # logits_xfl_mix, logits_xfu_mix = logits_xf_mix[:Nl], logits_xf_mix[Nl:]
-
-        # CLF1 loss
-        # loss_pred_bf = self.criterion(None, probl_mix, logits_xgl_mix, None)
-        loss_pred = self.criterion(None, prob_xl_gt, logits_xgl.reshape(-1,c), None)
-
-        # Con_g loss
-
-        # Con_f loss
-        # loss_graph = self.criterion(None, prob_xgu_fake, logits_xfu.reshape(-1,c), None)
-        loss_graph = torch.tensor(0.0, device=self.default_device)
         # Total loss
         coeff = self.get_consistency_coeff()
         loss = loss_pred + coeff * (self.config['loss']['mix'] * loss_con + self.config['loss']['graph'] * loss_graph)
@@ -396,11 +383,10 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
             prob_xgu_fake = torch.zeros(bsu*k, c, device=xl.device)
             # prob_xgu_fake.shape : torch.Size([576, 10])
             prob_xgu_fake.scatter_(dim=1, index=max_idx.unsqueeze(1).repeat(1, k).reshape(-1, 1), value=1.)
-            pdb.set_trace()
             #logits_s(strong_logits), max_idx(pseudo_label)
             loss_con = self.criterion(None, logits_xgu.reshape(-1,c), prob_xgu_fake, mask)
             loss_graph = self.criterion(None, logits_xfu.reshape(-1,c), prob_xgu_fake, mask)
-        elif self.config['loss']['hard_labels'] == 'no':
+        else:
             # prob_xgu_fake = prob_xgu_fake ** (1. / self.config['transform']['data_augment']['T'])
             prob_xgu_weak = prob_xgu_weak ** (1. / T)
             prob_xgu_weak = prob_xgu_weak / prob_xgu_weak.sum(dim=1, keepdim=True)
@@ -551,42 +537,53 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         p_cutoff = self.p_fn(self.curr_iter)
         #(train1: T, p_cutoff revision is requiring)
         #for debuging training stage#
-        if self.config['model']['attention'] == "no":
-            self.model.set_mode('pretrain')
-            if self.config['model']['mixup'] == 'no':
-                pred_xf, loss, loss_pred, loss_con, loss_graph = self.train1_wo_mixup(xl, yl, xu)
-            elif self.config['model']['mixup'] == 'yes':
-                pred_xf, loss, loss_pred, loss_con, loss_graph = self.train1(xl, yl, xu)
-            pred_xg = torch.tensor(0.0, device=self.default_device)
-
-        elif self.config['model']['attention'] == "Transformer":
-            if self.curr_iter < self.config['train']['pretrain_iters']:
+        if self.mode != 'finetune':
+            if self.config['model']['attention'] == "no":
                 self.model.set_mode('pretrain')
-                if self.config['model']['mixup'] =='yes':
-                    pred_xf, loss, loss_pred, loss_con, loss_graph = self.train1(xl, yl, xu)
-                elif self.config['model']['mixup'] =='no':
+                if self.config['model']['mixup'] == 'no':
                     pred_xf, loss, loss_pred, loss_con, loss_graph = self.train1_wo_mixup(xl, yl, xu)
+                elif self.config['model']['mixup'] == 'yes':
+                    pred_xf, loss, loss_pred, loss_con, loss_graph = self.train1(xl, yl, xu)
                 pred_xg = torch.tensor(0.0, device=self.default_device)
-                #pred_x, (x1_weak_label's softmax)
-                # loss, (total loss)
-                # loss_pred, (log loss for xl_mixup) loss_con, (log loss for xu_mixup),
-                # loss_graph = 0.0
-            elif self.curr_iter == self.config['train']['pretrain_iters']:
-                self.model.set_mode('train')
-                if self.config['model']['mixup'] == 'yes':
-                    # self.extract_fp()
-                    pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.train2(xl, yl, xu)
-                elif self.config['model']['mixup'] == 'no':
-                    pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.train2_wo_mixup(xl, yl, xu, T, p_cutoff)
-            else:
-                self.model.set_mode('train')
-                # if self.curr_iter % self.config['train']['sample_interval'] == 0:
-                if self.config['model']['mixup'] == 'yes':
-                    # self.extract_fp()
-                    pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.train2(xl, yl, xu)
-                elif self.config['model']['mixup'] == 'no':
-                    print("train2_wo_mixup")
-                    pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self. train2_wo_mixup(xl, yl, xu,T, p_cutoff)
+
+            elif self.config['model']['attention'] == "Transformer":
+                if self.curr_iter < self.config['train']['pretrain_iters']:
+                    self.model.set_mode('pretrain')
+                    if self.config['model']['mixup'] =='yes':
+                        pred_xf, loss, loss_pred, loss_con, loss_graph = self.train1(xl, yl, xu)
+                    elif self.config['model']['mixup'] =='no':
+                        pred_xf, loss, loss_pred, loss_con, loss_graph = self.train1_wo_mixup(xl, yl, xu)
+                    pred_xg = torch.tensor(0.0, device=self.default_device)
+                    #pred_x, (x1_weak_label's softmax)
+                    # loss, (total loss)
+                    # loss_pred, (log loss for xl_mixup) loss_con, (log loss for xu_mixup),
+                    # loss_graph = 0.0
+                elif self.curr_iter == self.config['train']['pretrain_iters']:
+                    self.model.set_mode('train')
+                    if self.config['model']['mixup'] == 'yes':
+                        # self.extract_fp()
+                        pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.train2(xl, yl, xu)
+                    elif self.config['model']['mixup'] == 'no':
+                        pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.train2_wo_mixup(xl, yl, xu, T, p_cutoff)
+                else:
+                    self.model.set_mode('train')
+                    # if self.curr_iter % self.config['train']['sample_interval'] == 0:
+                    if self.config['model']['mixup'] == 'yes':
+                        # self.extract_fp()
+                        pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.train2(xl, yl, xu)
+                    elif self.config['model']['mixup'] == 'no':
+                        print("train2_wo_mixup")
+                        pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self. train2_wo_mixup(xl, yl, xu,T, p_cutoff)
+        else:
+            self.model.set_mode('finetune')
+            if self.config['model']['mixup'] == 'no':
+                print("finetune_wo_mixup")
+                # xl (bs, k, c, h, w)
+                # yl (bs)
+                # xu (bu, k, c, h, w)
+                pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.finetune_wo_mixup(xl, yl, xu, T,
+                                                                                                 p_cutoff)
+
         results = {
             'y_pred': torch.max(pred_xf, dim=1)[1].detach().cpu().numpy(),
             'y_pred_agg': torch.max(pred_xg, dim=1)[1].detach().cpu().numpy(),
@@ -608,7 +605,9 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
     def forward_finetune(self, data):
         self.model.train()
         xl = data[0].reshape(-1, *data[0].shape[2:])
+        pdb.set_trace()
         xl = self.Tnorm(xl.to(self.default_device)).reshape(data[0].shape)
+
         yl = data[1].to(self.default_device)
         xu = data[2].reshape(-1, *data[2].shape[2:])
         xu = self.Tnorm(xu.to(self.default_device)).reshape(data[2].shape)
@@ -696,10 +695,10 @@ if __name__ == '__main__':
         args.save_root.mkdir(parents=True, exist_ok=True)
 
         trainer = FeatMatchTrainer(args, config)
-        if args.mode == 'new' or args.mode == 'resume' or args.mode == 'pretrained':
+        if args.mode != 'test':
             trainer.train()
-        elif args.mode == 'finetune':
-            trainer.finetune()
+        # elif args.mode == 'finetune':
+        #     trainer.train()
         acc_val, acc_test = trainer.test()
         acc_median = metric.median_acc(os.path.join(args.save_root, 'results.txt'))
         reporter.record(acc_val, acc_test, acc_median)

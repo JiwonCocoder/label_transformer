@@ -50,7 +50,6 @@ class SSLTrainer(Trainer):
                                             std=self.config['transform']['preprocess']['std'])
         else:
             raise ValueError
-
         return Ttrain, Tval, Tsimple, Tnorm.to(self.default_device)
 
     def init_dataloader(self):

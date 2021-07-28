@@ -438,7 +438,7 @@ class Trainer(object):
                 self.scheduler.step(self.curr_iter)
                 self.optimizer.zero_grad()
                 with amp.autocast(enabled=self.args.amp):
-                    loss, results = self.forward_finetune(data)
+                    loss, results = self.forward_train(data)
                 self.scaler.scale(loss).backward()
                 self.writer_grad_flow(self.model.named_parameters(), self.logger_finetune_train, self.curr_iter)
                 self.scaler.step(self.optimizer)
