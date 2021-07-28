@@ -659,6 +659,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
                     pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval1(x, y)
                 elif self.config['model']['mixup'] =='no':
                     pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval1_wo_mixup(x, y)
+                # FIXME: pred_xg: Transformer Output, pred_xf: Encoder Clf Output
                 pred_xg = torch.tensor(0.0, device=self.default_device)
             else:
                 if self.config['model']['mixup'] == 'yes':
@@ -667,7 +668,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
                     pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval2_wo_mixup(x, y)
         results = {
             'y_pred': torch.max(pred_xf, dim=1)[1].detach().cpu().numpy(),
-            'y_pred_agg': torch.max(pred_xg, dim=1)[1].detach().cpu().numpy(),
+            'y_pred_agg': torch.max(pred_xg, dim=1)[1].detach().cpu().numpy() if not pred_xg.shape==torch.Size([]) else np.zeros(0),
             'y_true': y.cpu().numpy(),
             'loss': {
                 'all': loss.detach().cpu().item(),
@@ -699,6 +700,7 @@ if __name__ == '__main__':
             trainer.train()
 
         acc_val, acc_test = trainer.test()
+        print(f"Val Acc: {acc_val:.4f}, Test ACC: {acc_test:.4f}")
         acc_median = metric.median_acc(os.path.join(args.save_root, 'results.txt'))
         reporter.record(acc_val, acc_test, acc_median)
         with open(args.save_root/'final_result.txt', 'w') as file:

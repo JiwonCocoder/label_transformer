@@ -208,8 +208,20 @@ class Trainer(object):
                 checkpoint = torch.load(ckpt_file, map_location=self.default_device)
             elif mode == 'test':
                 # ckpt_file = self.root_dir / 'best_ckpt'
-                ckpt_file = '/home/ubuntu/label_prop_prev/label_transformer/pretrained_weights/cifar10/pretrained_best_ckpt'
+                ckpt_file = './weights/best_ckpt'
                 checkpoint = torch.load(ckpt_file, map_location=self.default_device)
+                state_dict = checkpoint['model']
+                state_dict_fext = {}
+                state_dict_cls = {}
+                for k, v in state_dict.items():
+                    if k.startswith('fext'):
+                        k = k.replace('fext.', "")
+                        state_dict_fext[k] = v
+                    elif k.startswith('clf'):
+                        k = k.replace('clf.', "")
+                        state_dict_cls[k] = v
+                getattr(self, 'model').fext.load_state_dict(state_dict_fext)
+                getattr(self, 'model').clf.load_state_dict(state_dict_cls)
             else:
                 raise KeyError
             # ckpt = dict()
@@ -335,20 +347,29 @@ class Trainer(object):
         # TODO: ckpt에서 val_acc 대신 직접 계산
         # 2개 val_test, eval1_wo_mixup(target): target acc 기준으로 test, val acc가 얼마인지
         # reload the weights of the best model on val set so far
-        self.curr_iter, _, _ = self.load('test') # 3번째 원래 val_acc
-
-        # Calculate Test set accuracy
+        self.curr_iter, _, target_acc = self.load('test') # 3번째 원래 val_acc
+        self.curr_iter = 1 # eval1_wo_mixup으로 들어가게
+        
+        correct, total = 0, 0
         with torch.no_grad():
-            for _, data in enumerate(self.dataloader_test):
+            # Calculate Test set accuracy
+            for i, data in enumerate(self.dataloader_test):
                 with amp.autocast(enabled=self.args.amp):
                     results = self.forward_eval(data)
                 self.metric_test.record(results['y_true'], results['y_pred'], clear=False) 
-
-        # Calculate Validation set accuracy
+                correct += (results['y_true'] == results['y_pred']).sum().item()
+                total += len(results['y_true'])
+                print(f"Test Batch {i} | Test Acc: {correct/total:.4f}")
+            
+            # Calculate Validation set accuracy
+            correct, total = 0, 0 
             for i, data in enumerate(self.dataloader_val):
                 with amp.autocast(enabled=self.args.amp):
                     results = self.forward_eval(data)
-                self.metric_val.record(results('y_true'), results('y_pred'), clear=False)
+                self.metric_val.record(results['y_true'], results['y_pred'], clear=False)
+                correct += (results['y_true'] == results['y_pred']).sum().item()
+                total += len(results['y_true'])
+                print(f"Val Batch {i} | Val Acc: {correct/total:.4f}")
 
         val_acc = self.metric_val.average(clear=True)
         test_acc = self.metric_test.average(clear=True)

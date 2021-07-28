@@ -13,7 +13,17 @@
             "cwd": "${workspaceFolder}",
             "env": {"PYTHONPATH": "${cwd}"},
             "args": [
-                "-cf", "config/cifar10/cifar10_test_wrn_250.json", "-m", "test", "-n", "cifar10_test_wrn_250", "-i", "3", "-o", "-a"
+                "-cf", 
+                "config/cifar10/cifar10_test_wrn_250.json", 
+                "-m", 
+                "test", 
+                // "-n", 
+                // "cifar10_test_wrn_250", 
+                "-d", "0",
+                "-i", 
+                "3", 
+                "-o", 
+                "-a"
             ]
         }
     ]
