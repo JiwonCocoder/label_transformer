@@ -18,7 +18,15 @@ from util import misc, metric
 from util.command_interface import command_interface
 from util.reporter import Reporter
 from pathlib import Path
+class Get_Scalar:
+    def __init__(self, value):
+        self.value = value
 
+    def get_value(self, iter):
+        return self.value
+
+    def __call__(self, iter):
+        return self.value
 
 class FeatMatchTrainer(ssltrainer.SSLTrainer):
     def __init__(self, args, config):
@@ -26,7 +34,14 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         self.fu, self.pu = [], []
         self.fp, self.yp, self.lp = None, None, None
         self.criterion = getattr(common, self.config['loss']['criterion'])
+        self.t_fn = Get_Scalar(args.temperature) #(default: 0.5)
+        self.p_fn= Get_Scalar(args.p_cutoff)
+        if self.config['loss']['hard_labels'] == "yes":
+            self.criterion_con = getattr(common, 'hard_ce')
+        elif self.config['loss']['hard_labels'] == "no":
+            self.criterion_con = getattr(common, self.config['loss']['criterion'])
 
+        self.criterion = getattr(common, self.config['loss']['criterion'])
         self.attr_objs.extend(['fu', 'pu', 'fp', 'yp', 'lp'])
         self.load(args.mode, args.eval_sel)
 
@@ -44,131 +59,6 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
                           )
         print(f'Use [{self.config["model"]["backbone"]}] model with [{misc.count_n_parameters(model):,}] parameters')
         return model
-
-    # def get_labeled_featrues(self):
-    #     mode = self.model.training
-    #     self.model.eval()
-    #     with torch.no_grad():
-    #         labeled_dset = self.dataloader_train.labeled_dset.dataset
-    #         xl = torch.stack([self.Tval(xi) for xi in labeled_dset.get_x()])
-    #         bs = (self.config['train']['bsl'] + self.config['train']['bsu'])*self.config['transform']['data_augment']['K']
-    #         fl = []
-    #         for i in range(math.ceil(len(xl) / bs)):
-    #             xli = self.Tnorm(xl[i*bs:min((i+1)*bs, len(xl))].to(self.default_device))
-    #             fli = self.model.extract_feature(xli)
-    #             fl.append(fli.detach().clone().float().cpu())
-    #         fl = torch.cat(fl)
-    #         yl = torch.tensor(labeled_dset.y).cpu()
-    #     self.model.train(mode)
-    #
-    #     return fl, yl
-
-    # def get_unlabeled_features(self, thres=0.5, max_iter=5):
-    #     if len(self.fu) == 0:
-    #         return None, None
-    #
-    #     fu = torch.cat(self.fu).detach().clone()
-    #     pu = torch.cat(self.pu).detach().clone()
-    #     prob, yu = torch.max(pu, dim=1)
-    #
-    #     flag = False
-    #     #max_iter = 5
-    #     for _ in range(max_iter):
-    #         idx_thres = (prob > thres)
-    #         yu_ = yu[idx_thres]
-    #         class_distribution = torch.stack([torch.sum(yu_ == i) for i in range(self.config['model']['classes'])])
-    #
-    #         if not (class_distribution > self.config['model']['pk']).all():
-    #             thres = thres / 2.
-    #         else:
-    #             flag = True
-    #             break
-    #     del self.fu[:]
-    #     del self.pu[:]
-    #     if flag:
-    #         return fu[idx_thres], yu[idx_thres]
-    #     else:
-    #         return None, None
-
-    # def extract_fp(self):
-    #     fl, yl = self.get_labeled_featrues()
-    #     fu, yu = self.get_unlabeled_features()
-    #     pk = self.config['model']['pk']
-    #     rl = self.config['model']['l_ratio']
-    #
-    #     fp, yp, lp = [], [], []
-    #     print("fu is None?:" , fu == None)
-    #     for yi in torch.unique(yl, sorted=True):
-    #         if fu is None:  # all prototypes extracted from labeled data
-    #             fpi = self.extract_fp_per_class(fl[yl == yi], pk, record_mean=True)
-    #             pkl = len(fpi)
-    #             fp.append(fpi)
-    #             yp.append(torch.full((pkl,), yi, device=self.default_device, dtype=torch.long))
-    #             lp.append(torch.ones_like(yp[-1]))
-    #         else:
-    #             if pk == 1:
-    #                 fpi = self.extract_fp_per_class(torch.cat([fl[yl == yi], fu[yu == yi]]), 1, record_mean=True)
-    #                 pkl = len(fpi)
-    #                 fp.append(fpi)
-    #                 yp.append(torch.full((pkl,), yi, device=self.default_device, dtype=torch.long))
-    #                 lp.append(torch.ones_like(yp[-1]))
-    #             else:
-    #                 # prototypes extracted from labeled data
-    #                 #pk * rl(label_ratio) = 20 * 0.5 = 10
-    #                 fpi = self.extract_fp_per_class(fl[yl == yi], max(1, int(round(pk*rl))), record_mean=True)
-    #                 pkl = len(fpi)
-    #                 fp.append(fpi)
-    #                 yp.append(torch.full((pkl,), yi, device=self.default_device, dtype=torch.long))
-    #                 # yp.append(torch.size([pkl])
-    #                 lp.append(torch.ones_like(yp[-1]))
-    #                 # prototypes extracted from unlabeled data
-    #                 fpi = self.extract_fp_per_class(fu[yu == yi], max(1, pk - pkl), record_mean=True)
-    #                 pku = len(fpi)
-    #                 fp.append(fpi)
-    #                 yp.append(torch.full((pku,), yi, device=self.default_device, dtype=torch.long))
-    #                 lp.append(torch.zeros_like(yp[-1]))
-    #
-    #     self.fp = torch.cat(fp).to(self.default_device)
-    #     self.yp = torch.cat(yp).to(self.default_device)
-    #     self.lp = torch.cat(lp).to(self.default_device)
-    #
-    # # def extract_fp_per_class(self, fx, n, record_mean=True):
-    #     if n == 1:
-    #         fp = torch.mean(fx, dim=0, keepdim=True)
-    #     elif record_mean:
-    #         n = n-1
-    #         fm = torch.mean(fx, dim=0, keepdim=True)
-    #         if n >= len(fx):
-    #             fp = fx
-    #         else:
-    #             fp = self.kmeans(fx, n, 'cosine')
-    #         fp = torch.cat([fm, fp], dim=0)
-    #     else:
-    #         if n >= len(fx):
-    #             fp = fx
-    #         else:
-    #             fp = self.kmeans(fx, n, 'cosine')
-    #
-    #     return fp
-
-    # @staticmethod
-    # def kmeans(fx, n, metric='cosine'):
-    #     device = fx.device
-    #
-    #     if metric == 'cosine':
-    #         fn = fx / torch.clamp(torch.norm(fx, dim=1, keepdim=True), min=1e-20)
-    #     elif metric == 'euclidean':
-    #         fn = fx
-    #     else:
-    #         raise KeyError
-    #     fn = fn.detach().cpu().numpy()
-    #     fx = fx.detach().cpu().numpy()
-    #
-    #     labels = KMeans(n_clusters=n).fit_predict(fn)
-    #     fp = np.stack([np.mean(fx[labels == li], axis=0) for li in np.unique(labels)])
-    #     fp = torch.FloatTensor(fp).to(device)
-    #
-    #     return fp
 
     def data_mixup(self, xl, prob_xl, xu, prob_xu, alpha=0.75):
         Nl = len(xl)
@@ -400,7 +290,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
 
         return pred_x, loss, loss_pred, loss_con, loss_graph
 
-    def train2_wo_mixup(self, xl, yl, xu):
+    def train2_wo_mixup(self, xl, yl, xu, T, p_cutoff):
         bsl, bsu, k, c = len(xl), len(xu), xl.size(1), self.config['model']['classes']
         x = torch.cat([xl, xu], dim=0).reshape(-1, *xl.shape[2:])
         logits_xg, logits_xf, fx, fxg = self.model(x)
@@ -412,12 +302,24 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
 
         # Compute pseudo label(g)
         prob_xgu_fake = torch.softmax(logits_xgu[:, 0].detach(), dim=1)
-        if self.config['loss']['criterion'] =='ce_w_hard_labels':
-            pass
-        prob_xgu_fake = prob_xgu_fake ** (1. / self.config['transform']['data_augment']['T'])
-        prob_xgu_fake = prob_xgu_fake / prob_xgu_fake.sum(dim=1, keepdim=True)
-        prob_xgu_fake = prob_xgu_fake.unsqueeze(1).repeat(1, k, 1)
-        prob_xgu_fake = prob_xgu_fake.reshape(-1, c)
+        #reference: https://github.com/LeeDoYup/FixMatch-pytorch/blob/0f22e7f7c63396e0a0839977ba8101f0d7bf1b04/models/fixmatch/fixmatch_utils.py
+        if self.config['loss']['hard_labels'] =="yes":
+            max_probs, max_idx = torch.max(prob_xgu_fake, dim=1) #bu
+            mask = max_probs.ge(p_cutoff).float() #bu
+
+            max_idx = max_idx.unsqueeze(1).repeat(1, k) #bu,k
+            mask = mask.unsqueeze(1).repeat(1, k) #bu,k
+            prob_xgu_fake = prob_xgu_fake.unsqueeze(1).repeat(1, k, 1) #(bu, k, c)
+
+            #logits_s(strong_logits), max_idx(pseudo_label)
+            loss_con = self.criterion_con(prob_xgu_fake.reshape(-1,c), max_idx.reshape(-1), mask.reshape(-1))
+
+        elif self.config['loss']['hard_labels'] == 'no':
+            # prob_xgu_fake = prob_xgu_fake ** (1. / self.config['transform']['data_augment']['T'])
+            prob_xgu_fake = prob_xgu_fake ** (1. / T)
+            prob_xgu_fake = prob_xgu_fake / prob_xgu_fake.sum(dim=1, keepdim=True)
+            prob_xgu_fake = prob_xgu_fake.unsqueeze(1).repeat(1, k, 1)
+            loss_con = self.criterion_con(None, prob_xgu_fake, logits_xgu.reshape(-1,c), None)
 
         # Compute pseudo label(f)
         # prob_xfu_fake = torch.softmax(logits_xfu[:, 0].detach(), dim=1)
@@ -445,7 +347,6 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         loss_pred = self.criterion(None, prob_xl_gt, logits_xgl.reshape(-1,c), None)
 
         # Con_g loss
-        loss_con = self.criterion(None, prob_xgu_fake, logits_xgu.reshape(-1,c), None)
 
         # Con_f loss
         # loss_graph = self.criterion(None, prob_xgu_fake, logits_xfu.reshape(-1,c), None)
@@ -582,6 +483,11 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         xu = data[2].reshape(-1, *data[2].shape[2:])
         xu = self.Tnorm(xu.to(self.default_device)).reshape(data[2].shape)
         #fast debugging
+
+        #hyper_params for update
+        T = self.t_fn(self.curr_iter)
+        p_cutoff = self.p_fn(self.curr_iter)
+        #(train1: T, p_cutoff revision is requiring)
         #for debuging training stage#
         if self.config['model']['attention'] == "no":
             self.model.set_mode('pretrain')
@@ -609,7 +515,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
                     # self.extract_fp()
                     pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.train2(xl, yl, xu)
                 elif self.config['model']['mixup'] == 'no':
-                    pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.train2_wo_mixup(xl, yl, xu)
+                    pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.train2_wo_mixup(xl, yl, xu, T, p_cutoff)
             else:
                 self.model.set_mode('train')
                 # if self.curr_iter % self.config['train']['sample_interval'] == 0:
@@ -618,7 +524,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
                     pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.train2(xl, yl, xu)
                 elif self.config['model']['mixup'] == 'no':
                     print("train2_wo_mixup")
-                    pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self. train2_wo_mixup(xl, yl, xu)
+                    pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self. train2_wo_mixup(xl, yl, xu,T, p_cutoff)
         results = {
             'y_pred': torch.max(pred_xf, dim=1)[1].detach().cpu().numpy(),
             'y_pred_agg': torch.max(pred_xg, dim=1)[1].detach().cpu().numpy(),
@@ -628,18 +534,12 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
                 'pred': loss_pred.detach().cpu().item(),
                 'con': loss_con.detach().cpu().item(),
                 'graph': loss_graph.detach().cpu().item()
+            },
+            'loss_hyper_params': {
+                'temperature': np.array([T]).item(),
+                'p_cutoff': np.array([p_cutoff]).item()
             }
         }
-        # from tensorboardX import SummaryWriter
-        # writer = SummaryWriter(Path('weights')/args.name)
-        # writer.add_scalar('Loss/loss_all', results['loss']['all'],
-        #                   self.curr_iter)
-        # writer.add_scalar('Loss/loss_pred', results['loss']['pred'],
-        #                   self.curr_iter)
-        # writer.add_scalar('Loss/loss_con', results['loss']['con'],
-        #                   self.curr_iter)
-        # writer.add_scalar('Loss/loss_graph', results['loss']['graph'],
-        #                   self.curr_iter)
 
         return loss, results
 

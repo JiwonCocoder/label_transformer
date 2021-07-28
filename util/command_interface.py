@@ -21,14 +21,17 @@ def command_interface(title=None):
     parser.add_argument('--workers', '-w', default=12, type=int, help='number of workers for the dataloader')
     parser.add_argument('--amp', '-a', action='store_true', help='if specified, turn amp on')
     parser.add_argument('--eval_sel', '-es', default=None, type=str, help='at test mode, select eval1 or eval2')
+    #for consistency_loss
+    parser.add_argument('--p_cutoff', type=float, default=0.95)
+    parser.add_argument('--temperature', type=float, default=0.5)
     args = parser.parse_args()
     pprint(vars(args))
 
     config = json.load(open(args.config))
     #save_root_name comes_from config_name
     args.name = args.config.split('/')[-1].replace(".json","")+ f'[{args.lr}]'
-    config['train']['lr'] = args.lr
-    assert config['train']['lr'] == args.lr
+    config['train']['lr'] = float(args.lr)
+    assert config['train']['lr'] == float(args.lr)
     save_root = Path('weights')/args.name
     if args.mode == 'new' and Path(save_root).exists():
 
