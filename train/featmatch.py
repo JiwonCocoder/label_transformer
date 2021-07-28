@@ -322,11 +322,12 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         logits_xgl, logits_xgu = logits_xg[:bsl], logits_xg[bsl:]
         logits_xfl, logits_xfu = logits_xf[:bsl], logits_xf[bsl:]
 
+
         if self.hard_labels:
             target_xgl_1D = yl.unsqueeze(1).repeat(1, k).reshape(-1)
             loss_sup_g = self.hard_ce(logits_xgl.reshape(-1,c), target_xgl_1D)
         else:
-            target_xgl_2D = torch.zeros(len(xl), c, device=xl.device)
+            target_xgl_2D = torch.zeros(bsl*k, c, device=xl.device)
             target_xgl_2D.scatter_(dim=1, index=yl.unsqueeze(1).repeat(1, k).reshape(-1, 1), value=1.)
             loss_sup_g = self.criterion(None, target_xgl_2D, logits_xgl.reshape(-1, c), None)
 
@@ -393,7 +394,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
             target_xgl_1D = yl.unsqueeze(1).repeat(1, k).reshape(-1)
             loss_sup_g = self.hard_ce(logits_xgl.reshape(-1,c), target_xgl_1D)
         else:
-            target_xgl_2D = torch.zeros(len(xl), c, device=xl.device)
+            target_xgl_2D = torch.zeros(bsl*k, c, device=xl.device)
             target_xgl_2D.scatter_(dim=1, index=yl.unsqueeze(1).repeat(1, k).reshape(-1, 1), value=1.)
             loss_sup_g = self.criterion(None, target_xgl_2D, logits_xgl.reshape(-1, c), None)
 
