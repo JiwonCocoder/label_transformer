@@ -124,7 +124,7 @@ class AttenHeadX_pos_enc(nn.Module):
 class FeatMatch(nn.Module):
     def __init__(self, backbone, num_classes, devices, num_heads=1, amp=True,
                  attention='Feat', d_model = None, label_prop = None,
-                 detach = None, scaled = None, mode='train'):
+                 detach = None, scaled = None, mode='train', clf_share = None):
         super().__init__()
         self.mode = mode
         self.num_classes = num_classes
@@ -163,10 +163,16 @@ class FeatMatch(nn.Module):
                 print("========================")                
                 self.atten = AttenHeadX_pos_enc(self.fdim, self.d_model, num_heads, num_classes, scaled)
 
+
         self.clf = nn.Linear(self.fdim, num_classes)
-        if self.mode == 'pretrained':
+        if self.mode == 'pretrained' and clf_share == "no":
+            self.clf_share = False
             for param in self.clf.parameters():
                 param.requires_grad = False
+            self.clf_g = nn.Linear(self.fdim, num_classes)
+        elif self.mode == 'pretrained' and clf_share == "yes":
+            self.clf_share = True
+
     def set_mode(self, mode):
         self.mode = mode
 
@@ -201,7 +207,10 @@ class FeatMatch(nn.Module):
                     print("(error)deEmbedding is operating")
                     print("===================")
                     fxg = self.deEmbFC(fxg)
-                cls_xg = self.clf(fxg)
+                if self.clf_share == True:
+                    cls_xg = self.clf(fxg)
+                elif self.clf_share == False:
+                    cls_xg = self.clf_g(fxg)
             return cls_xg, cls_xf, fx, fxg
 
         elif self.mode == 'finetune':

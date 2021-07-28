@@ -184,7 +184,7 @@ class Trainer(object):
             curr_iter, curr_result, best_result = 0, 0.0, 0.0
         elif mode == 'pretrained':
             # ckpt_file = '../pretrained_weights/{}/pretrained_best_ckpt'.format(self.config["data"]["dataset"])
-            ckpt_file = '/home/ubuntu/label_prop_prev/label_transformer/pretrained_weights/cifar10/250/best_ckpt'
+            ckpt_file = 'pretrained_weights/cifar10/{}/best_ckpt'.format(self.config['data']['Nl'])
             checkpoint = torch.load(ckpt_file, map_location=self.default_device)
             state_dict = checkpoint['model']
             state_dict_fext = {}
@@ -198,6 +198,9 @@ class Trainer(object):
                     state_dict_cls[k] = v
             getattr(self, 'model').fext.load_state_dict(state_dict_fext)
             getattr(self, 'model').clf.load_state_dict(state_dict_cls)
+            #mode:reumse_from_pretrained + clf_g (seperate)
+            if self.config['model']['clf_share'] == "no":
+                getattr(self, 'model').clf_g.load_state_dict(state_dict_cls)
 
             curr_iter = self.config['train']['pretrain_iters'] + 1
             curr_result = checkpoint['curr_result']

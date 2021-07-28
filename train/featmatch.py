@@ -76,7 +76,8 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
                           label_prop = self.config['model']['label_prop'],
                           detach = self.config['model']['detach'],
                           scaled = self.config['model']['scaled'],
-                          mode = self.args.mode
+                          mode = self.args.mode,
+                          clf_share = self.config['model']['clf_share']
                           )
         print(f'Use [{self.config["model"]["backbone"]}] model with [{misc.count_n_parameters(model):,}] parameters')
         return model
