@@ -1,5 +1,23 @@
 {
     "python.formatting.provider": "black",
     "editor.formatOnSave": true,
-    "editor.defaultFormatter": "vscode.emmet"
+    "editor.defaultFormatter": "vscode.emmet",
+    "[python]": {"editor.defaultFormatter": "ms-python.vscode-pylance"},
+    "todohighlight.keywords": [
+        "DEBUG:",
+        "REVIEW:",
+        {
+            "text": "NOTE:",
+            "color": "#ff0000",
+            "backgroundColor": "yellow",
+            "overviewRulerColor": "grey"
+        },
+        {
+            "text": "TODO:",
+            "color": "red",
+            "border": "1px solid red",
+            "borderRadius": "2px", //NOTE: using borderRadius along with `border` or you will see nothing change
+            "backgroundColor": "rgba(255,255,255)",
+            //other styling properties goes here ... 
+        }]
 }

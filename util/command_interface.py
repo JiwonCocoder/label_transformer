@@ -20,6 +20,7 @@ def command_interface(title=None):
     parser.add_argument('--overwrite', '-ow', action='store_true', help='if specified, overwrite existing folder without asking')
     parser.add_argument('--workers', '-w', default=12, type=int, help='number of workers for the dataloader')
     parser.add_argument('--amp', '-a', action='store_true', help='if specified, turn amp on')
+    parser.add_argument('--eval_sel', '-es', default=None, type=str, help='at test mode, select eval1 or eval2')
     args = parser.parse_args()
     pprint(vars(args))
 

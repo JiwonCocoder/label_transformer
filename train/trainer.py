@@ -2,6 +2,7 @@ import pdb
 
 import numpy as np
 import git
+from torch._C import *
 from tqdm import tqdm
 from pathlib import Path
 from tensorboardX import SummaryWriter
@@ -38,6 +39,8 @@ class Trainer(object):
         self.metric = metric.AccMetric()
         self.metric_val = metric.AccMetric()
         self.metric_test = metric.AccMetric()
+        self.metric_agg_val = metric.AccMetric()
+        self.metric_agg_test = metric.AccMetric()
 
         """
         Append the name of additional variables you want to record.
@@ -47,7 +50,7 @@ class Trainer(object):
         """
         self.state_objs = ['model', 'optimizer']
         self.attr_objs = []
-        self.curr_iter, self.curr_result, self.best_result = self.load(args.mode)
+        self.curr_iter, self.curr_result, self.best_result = self.load(args.mode, args.eval_sel)
 
     def record(self):
         """
@@ -166,7 +169,8 @@ class Trainer(object):
         return
 
     # TODO: 새로운 mode 추가 (test mode)
-    def load(self, mode):
+    # TODO: args로 eval1 실행, eval2 실행 
+    def load(self, mode, eval_sel=None):
         """
         load from checkpoint. supported modes: new, resume, test
         :return curr_iter: int. current iteration.
@@ -208,11 +212,16 @@ class Trainer(object):
                 checkpoint = torch.load(ckpt_file, map_location=self.default_device)
             elif mode == 'test':
                 # ckpt_file = self.root_dir / 'best_ckpt'
-                ckpt_file = './weights/best_ckpt'
+                # TODO: args로 모드 나눠서 eval1 ckpt or eval2 ckpt 불러오기
+                weight_path = Path('./weights')
+                ckpt_file = next(iter(weight_path.glob(f"{eval_sel}*_ckpt")))
+                # ckpt_file = './weights/best_ckpt'
                 checkpoint = torch.load(ckpt_file, map_location=self.default_device)
+
                 state_dict = checkpoint['model']
                 state_dict_fext = {}
                 state_dict_cls = {}
+                state_dict_atten = {}
                 for k, v in state_dict.items():
                     if k.startswith('fext'):
                         k = k.replace('fext.', "")
@@ -220,8 +229,13 @@ class Trainer(object):
                     elif k.startswith('clf'):
                         k = k.replace('clf.', "")
                         state_dict_cls[k] = v
+                    elif k.startswith('atten'):
+                        k = k.replace('atten.', "")
+                        state_dict_atten[k] = v
                 getattr(self, 'model').fext.load_state_dict(state_dict_fext)
                 getattr(self, 'model').clf.load_state_dict(state_dict_cls)
+                if eval_sel == "eval2": # load attention module
+                    getattr(self, 'model').atten.load_state_dict(state_dict_atten)
             else:
                 raise KeyError
             # ckpt = dict()
@@ -346,11 +360,15 @@ class Trainer(object):
 
         # TODO: ckpt에서 val_acc 대신 직접 계산
         # 2개 val_test, eval1_wo_mixup(target): target acc 기준으로 test, val acc가 얼마인지
+        # TODO: Encoder만 거친 acc를 ckpt에서 load해서 출력 + Transformer까지 거친 acc를 계산해서 출력
         # reload the weights of the best model on val set so far
-        self.curr_iter, _, target_acc = self.load('test') # 3번째 원래 val_acc
-        self.curr_iter = 1 # eval1_wo_mixup으로 들어가게
-        
-        correct, total = 0, 0
+        self.curr_iter, _, loaded_acc = self.load('test', self.args.eval_sel) # 3번째 원래 val_acc
+        if self.args.eval_sel == 'eval1':
+            self.curr_iter = 1 # eval1_wo_mixup으로 들어가게
+        elif self.args.eval_sel == 'eval2':
+            self.curr_iter = self.config['train']['pretrain_iters']+1 # eval2로 들어가도록
+
+        correct, correct_agg, total = 0, 0, 0
         with torch.no_grad():
             # Calculate Test set accuracy
             for i, data in enumerate(self.dataloader_test):
@@ -358,19 +376,33 @@ class Trainer(object):
                     results = self.forward_eval(data)
                 self.metric_test.record(results['y_true'], results['y_pred'], clear=False) 
                 correct += (results['y_true'] == results['y_pred']).sum().item()
+
+                if not results['y_pred_agg'].all():
+                    self.metric_agg_test.record(results['y_true'], results['y_pred_agg'], clear=False) 
+                    correct_agg += (results['y_true'] == results['y_pred_agg']).sum().item()
+
                 total += len(results['y_true'])
-                print(f"Test Batch {i} | Test Acc: {correct/total:.4f}")
+                print(f"Test Batch {i} | Test Acc: {correct/total:.4f} | Agg Acc: {correct_agg/total:.4f}")
             
             # Calculate Validation set accuracy
-            correct, total = 0, 0 
+            correct, correct_agg, total = 0, 0, 0
             for i, data in enumerate(self.dataloader_val):
                 with amp.autocast(enabled=self.args.amp):
                     results = self.forward_eval(data)
                 self.metric_val.record(results['y_true'], results['y_pred'], clear=False)
                 correct += (results['y_true'] == results['y_pred']).sum().item()
+
+                if not results['y_pred_agg'].all():
+                    self.metric_agg_val.record(results['y_true'], results['y_pred_agg'], clear=False) 
+                    correct_agg += (results['y_true'] == results['y_pred_agg']).sum().item()
+
                 total += len(results['y_true'])
-                print(f"Val Batch {i} | Val Acc: {correct/total:.4f}")
+                print(f"Val Batch {i} | Val Acc: {correct/total:.4f} | Agg Acc: {correct_agg/total:.4f}")
 
         val_acc = self.metric_val.average(clear=True)
         test_acc = self.metric_test.average(clear=True)
-        return val_acc, test_acc
+        if not results['y_pred_agg'].all():
+            agg_val_acc = self.metric_agg_val.average(clear=True)
+            agg_test_acc = self.metric_agg_test.average(clear=True)
+            return val_acc, test_acc, agg_val_acc, agg_test_acc, loaded_acc
+        return val_acc, test_acc, 0.0, 0.0, loaded_acc
