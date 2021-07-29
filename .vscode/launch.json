@@ -16,7 +16,7 @@
                 "-cf", 
                 "config/cifar10/cifar10_test_wrn_250.json", 
                 "-m", 
-                "finetune3", 
+                "new", 
                 "-d", "1",
                 "-i", 
                 "3", 

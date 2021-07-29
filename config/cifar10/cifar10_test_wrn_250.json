@@ -29,7 +29,8 @@
     "d_model": 128,
     "label_prop" : "concat",
     "detach" : "no",
-    "scaled" : "yes"
+    "scaled" : "yes",
+    "finetune_mode": 2
   },
   
 

@@ -42,9 +42,6 @@ class Trainer(object):
         '''
         self.logger_train = SummaryWriter(logdir=self.root_dir/'log'/'train')
         self.logger_val = SummaryWriter(logdir=self.root_dir/'log'/'val')
-        self.logger_finetune_train =SummaryWriter(logdir=self.root_dir/'log'/'finetune_train')
-        self.logger_finetune_val =SummaryWriter(logdir=self.root_dir/'log'/'finetune_val')
-        self.logger_temp = SummaryWriter(logdir=self.root_dir/'log'/'temperature')
 
         self.metric = metric.AccMetric()
         self.metric_val = metric.AccMetric()
@@ -410,7 +407,7 @@ class Trainer(object):
                 self.scheduler.step(self.curr_iter)
                 self.optimizer.zero_grad()
                 with amp.autocast(enabled=self.args.amp):
-                    loss, results, T, p_cutoff = self.forward_train(data)
+                    loss, results = self.forward_train(data)
                 self.scaler.scale(loss).backward()
                 self.writer_grad_flow(self.model.named_parameters(), self.logger_train, self.curr_iter)
                 self.scaler.step(self.optimizer)
@@ -427,9 +424,8 @@ class Trainer(object):
                     for k, v in results_c.items():
                         self.logger_train.add_scalar(f'{c}/{k}', v, self.curr_iter)
 
-                self.logger_temp.add_scalar('temp/', T, self.curr_iter)
-                self.logger_temp.add_scalar('p_thres/', p_cutoff, self.curr_iter)
-
+                # fast debugging
+                self.config['train']['update_interval'] = 25
                 # evaluate trained model
                 if (self.curr_iter + 1) % self.config['train']['update_interval'] == 0 or (self.curr_iter + 1) == self.config['train']['update_interval'] :
                     val_iters = np.linspace(self.curr_iter + 1 - self.config['train']['update_interval'],

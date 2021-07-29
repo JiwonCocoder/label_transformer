@@ -14,7 +14,7 @@ def command_interface(title=None):
     parser.add_argument('--rand_seed', '-r', default=1, type=int, help='random seed initialization')
     # parser.add_argument('--name', '-n', default='exp', help='name of this experiment')
     parser.add_argument('--lr', '-lr', default=0.04, help='learning_rate')
-    parser.add_argument('--mode', '-m', default='new', choices=['new', 'resume', 'test', 'pretrained','finetune', 'finetune1', 'finetune2', 'finetune3'], help='running mode')
+    parser.add_argument('--mode', '-m', default='new', choices=['new', 'resume', 'test', 'pretrained', 'finetune'], help='running mode')
     parser.add_argument('--iters', '-i', default=1, type=int, help='number of iterations to run the experiment')
     parser.add_argument('--omniscient', '-o', action='store_true', help='if specified, set validation set = test set')
     parser.add_argument('--overwrite', '-ow', action='store_true', help='if specified, overwrite existing folder without asking')
@@ -34,6 +34,7 @@ def command_interface(title=None):
     assert config['train']['lr'] == float(args.lr)
     save_root = Path('weights')/args.name
 
+    # Deprecated
     if args.mode == 'finetune':
         fine_tune_folder = args.name +"_finetune"
         if Path(save_root).exists():

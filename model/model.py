@@ -124,7 +124,7 @@ class AttenHeadX_pos_enc(nn.Module):
 class FeatMatch(nn.Module):
     def __init__(self, backbone, num_classes, devices, num_heads=1, amp=True,
                  attention='Feat', d_model = None, label_prop = None,
-                 detach = None, scaled = None, mode='train', clf_share = None):
+                 detach = None, scaled = None, mode='train', clf_share = None, finetune_mode = None):
         super().__init__()
         self.mode = mode
         self.num_classes = num_classes
@@ -166,13 +166,14 @@ class FeatMatch(nn.Module):
 
         self.clf_f = nn.Linear(self.fdim, num_classes)
         self.clf_g = nn.Linear(self.fdim, num_classes)
-        if clf_share == "no":
-            self.clf_share = False
-            # # for param in self.clf.parameters():
-            # #     param.requires_grad = False
-            # self.clf_g = nn.Linear(self.fdim, num_classes)
-        elif clf_share == "yes":
-            self.clf_share = True
+        # # clf_share no: use clf_f, clf_g : finetune mode 3
+        # if clf_share == "no":
+        #     self.clf_share = False
+        # # clf_share yes: use only clf_f : finetune mode 1, 2
+        # elif clf_share == "yes":
+        #     self.clf_share = True
+
+        self.finetune_mode = finetune_mode
 
     def set_mode(self, mode):
         self.mode = mode
@@ -215,92 +216,68 @@ class FeatMatch(nn.Module):
                     fxg = self.deEmbFC(fxg)
                 cls_xg = self.clf_g(fxg)
 
-
             return cls_xg, cls_xf, fx, fxg
 
-        # Shared clf with agg_transformer detach
-        elif self.mode == 'finetune1':
-            if self.devices is not None:
-                fx = self.extract_feature(x)
-                # fx(clf_input) : (bs*(k+1), fdim)
-                cls_xf = self.clf(fx)
-                # cls_xf(clf_out) : (bs*(k+1), num_class)
-                fxg = self.atten(
-                    fx.clone().detach().requires_grad_(True), 
-                    cls_xf.clone().detach().requires_grad_(True)
-                )
-                # fxg(atten_out) : (1, bs*(k+1), fdim))
-                fxg = fxg.squeeze(0)
-                # fxg : (bs*(k+1), fdim)
-                if self.fdim != self.d_model:
-                    print("self.fdim {} is not same as self.d_model {}".format(self.fdim, self.fdim))
-                    print("==================")
-                    print("(error)deEmbedding is operating")
-                    print("===================")
-                    fxg = self.deEmbFC(fxg)
-                cls_xg = self.clf(fxg)
-                '''
-                1728 = (bs + bu) * k
-                cls_xg.shape : torch.Size([1728, 10])
-                cls_xf.shape : torch.Size([1728, 10]) 
-                fx.shape     : torch.Size([1728, 128])
-                fxg.shape    : torch.Size([1728, 128])
-                '''
-                return cls_xg, cls_xf, fx, fxg
-        
-        # Shared clf with no detach
-        elif self.mode == 'finetune2':
-            if self.devices is not None:
-                fx = self.extract_feature(x)
-                # fx(clf_input) : (bs*(k+1), fdim)
-                cls_xf = self.clf_g(fx)
-                # cls_xf(clf_out) : (bs*(k+1), num_class)
-                fxg = self.atten(fx, cls_xf)
-                # fxg(atten_out) : (1, bs*(k+1), fdim))
-                fxg = fxg.squeeze(0)
-                # fxg : (bs*(k+1), fdim)
-                if self.fdim != self.d_model:
-                    print("self.fdim {} is not same as self.d_model {}".format(self.fdim, self.fdim))
-                    print("==================")
-                    print("(error)deEmbedding is operating")
-                    print("===================")
-                    fxg = self.deEmbFC(fxg)
-                cls_xg = self.clf_g(fxg)
-                '''
-                1728 = (bs + bu) * k
-                cls_xg.shape : torch.Size([1728, 10])
-                cls_xf.shape : torch.Size([1728, 10]) 
-                fx.shape     : torch.Size([1728, 128])
-                fxg.shape    : torch.Size([1728, 128])
-                '''
-                return cls_xg, cls_xf, fx, fxg
+        elif self.mode == 'finetune':
+            # Shared clf with agg_transformer detach
+            if self.finetune_mode == 1:
+                if self.devices is not None:
+                    fx = self.extract_feature(x)
+                    # fx(clf_input) : (bs*(k+1), fdim)
+                    cls_xf = self.clf_g(fx)
+                    # cls_xf(clf_out) : (bs*(k+1), num_class)
+                    fxg = self.atten(
+                        fx.clone().detach().requires_grad_(True), 
+                        cls_xf.clone().detach().requires_grad_(True)
+                    )
+                    # fxg(atten_out) : (1, bs*(k+1), fdim))
+                    fxg = fxg.squeeze(0)
+                    # fxg : (bs*(k+1), fdim)
+                    if self.fdim != self.d_model:
+                        print("self.fdim {} is not same as self.d_model {}".format(self.fdim, self.fdim))
+                        print("==================")
+                        print("(error)deEmbedding is operating")
+                        print("===================")
+                        fxg = self.deEmbFC(fxg)
+                    cls_xg = self.clf_g(fxg)
+                    '''
+                    1728 = (bs + bu) * k
+                    cls_xg.shape : torch.Size([1728, 10])
+                    cls_xf.shape : torch.Size([1728, 10]) 
+                    fx.shape     : torch.Size([1728, 128])
+                    fxg.shape    : torch.Size([1728, 128])
+                    '''
+                    return cls_xg, cls_xf, fx, fxg
+            
+            # Shared clf with no detach
+            elif self.finetune_mode == 2:
+                if self.devices is not None:
+                    fx = self.extract_feature(x)
+                    # fx(clf_input) : (bs*(k+1), fdim)
+                    cls_xf = self.clf_g(fx)
+                    # cls_xf(clf_out) : (bs*(k+1), num_class)
+                    fxg = self.atten(fx, cls_xf)
+                    # fxg(atten_out) : (1, bs*(k+1), fdim))
+                    fxg = fxg.squeeze(0)
+                    # fxg : (bs*(k+1), fdim)
+                    if self.fdim != self.d_model:
+                        print("self.fdim {} is not same as self.d_model {}".format(self.fdim, self.fdim))
+                        print("==================")
+                        print("(error)deEmbedding is operating")
+                        print("===================")
+                        fxg = self.deEmbFC(fxg)
+                    cls_xg = self.clf_g(fxg)
+                    '''
+                    1728 = (bs + bu) * k
+                    cls_xg.shape : torch.Size([1728, 10])
+                    cls_xf.shape : torch.Size([1728, 10]) 
+                    fx.shape     : torch.Size([1728, 128])
+                    fxg.shape    : torch.Size([1728, 128])
+                    '''
+                    return cls_xg, cls_xf, fx, fxg
 
-        # Separated clf and no detach
-        elif self.mode == 'finetune3':
-            if self.devices is not None:
-                fx = self.extract_feature(x)
-                # fx(clf_input) : (bs*(k+1), fdim)
-                cls_xf = self.clf(fx)
-                # cls_xf(clf_out) : (bs*(k+1), num_class)
-                fxg = self.atten(fx, cls_xf)
-                # fxg(atten_out) : (1, bs*(k+1), fdim))
-                fxg = fxg.squeeze(0)
-                # fxg : (bs*(k+1), fdim)
-                if self.fdim != self.d_model:
-                    print("self.fdim {} is not same as self.d_model {}".format(self.fdim, self.fdim))
-                    print("==================")
-                    print("(error)deEmbedding is operating")
-                    print("===================")
-                    fxg = self.deEmbFC(fxg)
-                cls_xg = self.clf_g(fxg)
-                '''
-                1728 = (bs + bu) * k
-                cls_xg.shape : torch.Size([1728, 10])
-                cls_xf.shape : torch.Size([1728, 10]) 
-                fx.shape     : torch.Size([1728, 128])
-                fxg.shape    : torch.Size([1728, 128])
-                '''
-                return cls_xg, cls_xf, fx, fxg
+            else:
+                raise ValueError
 
         else:
             raise ValueError

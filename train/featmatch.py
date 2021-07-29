@@ -84,7 +84,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
                           detach = self.config['model']['detach'],
                           scaled = self.config['model']['scaled'],
                           mode = self.args.mode,
-                          clf_share = self.config['model']['clf_share']
+                          finetune_mode = self.config['model']['finetune_mode']
                           )
         print(f'Use [{self.config["model"]["backbone"]}] model with [{misc.count_n_parameters(model):,}] parameters')
         return model
@@ -441,7 +441,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
             # To check softmax_temperature value#
             # prob_xgu_weak = prob_xgu_weak ** (1. / T)
             # prob_xgu_weak = prob_xgu_weak / prob_xgu_weak.sum(dim=1, keepdim=True)
-            prob_xgu_with_T = torch.softmax(prob_xgu_weak / T, dim=-1)
+            prob_xgu_with_T = torch.softmax(prob_xgu_weak / self.T, dim=-1)
             prob_xgu_with_T = prob_xgu_with_T.unsqueeze(1).repeat(1, k, 1).reshape(-1, c)
 
             loss_con_g = self.criterion(None, prob_xgu_with_T, logits_xgu.reshape(-1, c), None, mask_xgu)
@@ -583,7 +583,8 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         T = torch.clamp(self.T_origin, 1e-9, 1.0)
         p_cutoff = torch.clamp(self.p_cutoff_origin, 1e-9, 1.0)
         #fast debugging
-
+        self.config['train']['end_iter'] = 300
+        self.config['train']['pretrain_iter'] = 100
         # #hyper_params for update
         # T = self.t_fn(self.curr_iter)
         # p_cutoff = self.p_fn(self.curr_iter)
@@ -664,7 +665,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
 
 
         return loss, results
-        
+
     # Deprecated
     # def forward_finetune(self, data):
     #     self.model.train()
@@ -701,30 +702,39 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         self.model.eval()
         x = self.Tnorm(data[0].to(self.default_device))
         y = data[1].to(self.default_device)
-        if self.config['model']['attention'] == "no":
+        # if self.config['model']['attention'] == "no":
+        #     self.model.set_mode('pretrain')
+        #     pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval1_wo_mixup(x, y)
+        #     pred_xg = torch.tensor(0.0, device=self.default_device)
+
+        # elif self.config['model']['attention'] == "Transformer":
+        #     if self.curr_iter < self.config['train']['pretrain_iters']:
+        #         self.model.set_mode('pretrain')
+        #         if self.config['model']['mixup'] =='yes':
+        #             pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval1(x, y)
+        #         elif self.config['model']['mixup'] =='no':
+        #             pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval1_wo_mixup(x, y)
+        #         # pred_xg: Transformer Output, pred_xf: Encoder Clf Output
+        #         pred_xg = torch.tensor(0.0, device=self.default_device)
+        #     else:
+        #         # FIXME: model의 test mode가 필요?
+        #         self.model.set_mode('train')
+        #         if self.config['model']['mixup'] == 'yes':
+        #             pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval2(x,y)
+        #         elif self.config['model']['mixup'] == 'no':
+        #             pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval2_wo_mixup(x, y)
+
+        if self.curr_iter > self.config['train']['pretrain_iter']:
+            self.model.set_mode('train')
+            pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval2_wo_mixup(x, y)
+        elif self.curr_iter <= self.config['train']['pretrain_iter']:
             self.model.set_mode('pretrain')
             pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval1_wo_mixup(x, y)
             pred_xg = torch.tensor(0.0, device=self.default_device)
-
-        elif self.config['model']['attention'] == "Transformer":
-            if self.curr_iter < self.config['train']['pretrain_iters']:
-                self.model.set_mode('pretrain')
-                if self.config['model']['mixup'] =='yes':
-                    pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval1(x, y)
-                elif self.config['model']['mixup'] =='no':
-                    pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval1_wo_mixup(x, y)
-                # pred_xg: Transformer Output, pred_xf: Encoder Clf Output
-                pred_xg = torch.tensor(0.0, device=self.default_device)
-            else:
-                # FIXME: model의 test mode가 필요?
-                self.model.set_mode('train')
-                if self.config['model']['mixup'] == 'yes':
-                    pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval2(x,y)
-                elif self.config['model']['mixup'] == 'no':
-                    pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval2_wo_mixup(x, y)
+        
         results = {
             'y_pred': torch.max(pred_xf, dim=1)[1].detach().cpu().numpy(),
-            'y_pred_agg': torch.max(pred_xg, dim=1)[1].detach().cpu().numpy() if not pred_xg.shape==torch.Size([]) else np.zeros_like(pred_xf[:0].detach().cpu().numpy()),
+            'y_pred_agg': torch.max(pred_xg, dim=1)[1].detach().cpu().numpy() if not pred_xg.shape==torch.Size([]) else np.zeros_like(pred_xf[:,0].detach().cpu().numpy()),
             'y_true': y.cpu().numpy(),
             'loss': {
                 'all': loss.detach().cpu().item(),
