@@ -14,16 +14,14 @@
             "env": {"PYTHONPATH": "${cwd}"},
             "args": [
                 "-cf", 
-                "config/cifar10/cifar10_test_wrn_250.json", 
+                "config/cifar10/[cifar10][new][wrn][250][soft][finetune_2].json", 
                 "-m", 
                 "new", 
                 "-d", "1",
                 "-i", 
                 "3", 
                 "-o", 
-                "-a",
-                "-es",
-                "eval2"
+                "-a"
             ]
         }
     ]

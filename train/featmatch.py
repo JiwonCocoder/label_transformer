@@ -63,7 +63,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         self.criterion = getattr(common, self.config['loss']['criterion'])
         self.hard_ce = getattr(common, 'hard_ce')
         self.attr_objs.extend(['fu', 'pu', 'fp', 'yp', 'lp'])
-        self.load(args.mode, args.eval_sel)
+        self.load(args.mode)
         self.mode = args.mode
         self.end_iter = (self.config['train']['pretrain_iters'] + \
                       2 * self.config['train']['cycle_iters'] + \

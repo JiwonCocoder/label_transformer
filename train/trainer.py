@@ -59,7 +59,7 @@ class Trainer(object):
         """
         self.state_objs = ['model', 'optimizer']
         self.attr_objs = []
-        self.curr_iter, self.curr_result, self.best_result = self.load(args.mode, args.eval_sel)
+        self.curr_iter, self.curr_result, self.best_result = self.load(args.mode)
 
     def record(self):
         """
@@ -179,7 +179,7 @@ class Trainer(object):
 
     # TODO: 새로운 mode 추가 (test mode)
     # TODO: args로 eval1 실행, eval2 실행 
-    def load(self, mode, eval_sel=None):
+    def load(self, mode):
         """
         load from checkpoint. supported modes: new, resume, test
         :return curr_iter: int. current iteration.
@@ -243,10 +243,10 @@ class Trainer(object):
                 ckpt_file = self.root_dir / 'curr_ckpt'
                 checkpoint = torch.load(ckpt_file, map_location=self.default_device)
             elif mode == 'test':
-                # ckpt_file = self.root_dir / 'best_ckpt'
+                ckpt_file = self.root_dir / 'best_ckpt'
                 # TODO: args로 모드 나눠서 eval1 ckpt or eval2 ckpt 불러오기
-                weight_path = Path('./weights')
-                ckpt_file = next(iter(weight_path.glob(f"{eval_sel}*_ckpt")))
+                # weight_path = Path('./weights')
+                # ckpt_file = next(iter(weight_path.glob(f"{eval_sel}*_ckpt")))
                 # ckpt_file = './weights/best_ckpt'
                 checkpoint = torch.load(ckpt_file, map_location=self.default_device)
 
@@ -266,8 +266,8 @@ class Trainer(object):
                         state_dict_atten[k] = v
                 getattr(self, 'model').fext.load_state_dict(state_dict_fext)
                 getattr(self, 'model').clf.load_state_dict(state_dict_cls)
-                if eval_sel == "eval2": # load attention module
-                    getattr(self, 'model').atten.load_state_dict(state_dict_atten)
+                # if eval_sel == "eval2": # load attention module
+                #     getattr(self, 'model').atten.load_state_dict(state_dict_atten)
             else:
                 raise KeyError
             # ckpt = dict()
@@ -535,11 +535,11 @@ class Trainer(object):
         # 2개 val_test, eval1_wo_mixup(target): target acc 기준으로 test, val acc가 얼마인지
         # TODO: Encoder만 거친 acc를 ckpt에서 load해서 출력 + Transformer까지 거친 acc를 계산해서 출력
         # reload the weights of the best model on val set so far
-        self.curr_iter, _, loaded_acc = self.load('test', self.args.eval_sel) # 3번째 원래 val_acc
-        if self.args.eval_sel == 'eval1':
-            self.curr_iter = 1 # eval1_wo_mixup으로 들어가게
-        elif self.args.eval_sel == 'eval2':
-            self.curr_iter = self.config['train']['pretrain_iters']+1 # eval2로 들어가도록
+        self.curr_iter, _, loaded_acc = self.load('test') # 3번째 원래 val_acc
+        # if self.args.eval_sel == 'eval1':
+        #     self.curr_iter = 1 # eval1_wo_mixup으로 들어가게
+        # elif self.args.eval_sel == 'eval2':
+        #     self.curr_iter = self.config['train']['pretrain_iters']+1 # eval2로 들어가도록
 
         correct, correct_agg, total = 0, 0, 0
         with torch.no_grad():
