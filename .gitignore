@@ -11,3 +11,4 @@ __pycache__/
 pretrained_weights/
 *.py[cod]
 
+.vscode/settings.json
