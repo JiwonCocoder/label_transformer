@@ -186,7 +186,6 @@ class FeatMatch(nn.Module):
             return self.extract_feature(x)
 
         elif self.mode == 'pretrain':
-            print("pretrain")
             fx = self.extract_feature(x)
             cls_x = self.clf_f(fx)
             return cls_x

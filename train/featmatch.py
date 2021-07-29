@@ -580,11 +580,10 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         yl = data[1].to(self.default_device)
         xu = data[2].reshape(-1, *data[2].shape[2:])
         xu = self.Tnorm(xu.to(self.default_device)).reshape(data[2].shape)
-        T = torch.clamp(self.T_origin, 1e-9, 1.0)
-        p_cutoff = torch.clamp(self.p_cutoff_origin, 1e-9, 1.0)
+        # T = torch.clamp(self.T_origin, 1e-9, 1.0)
+        # p_cutoff = torch.clamp(self.p_cutoff_origin, 1e-9, 1.0)
         #fast debugging
-        self.config['train']['end_iter'] = 300
-        self.config['train']['pretrain_iter'] = 100
+
         # #hyper_params for update
         # T = self.t_fn(self.curr_iter)
         # p_cutoff = self.p_fn(self.curr_iter)
@@ -724,10 +723,10 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         #         elif self.config['model']['mixup'] == 'no':
         #             pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval2_wo_mixup(x, y)
 
-        if self.curr_iter > self.config['train']['pretrain_iter']:
+        if self.curr_iter > self.config['train']['pretrain_iters']:
             self.model.set_mode('train')
             pred_xg, pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval2_wo_mixup(x, y)
-        elif self.curr_iter <= self.config['train']['pretrain_iter']:
+        elif self.curr_iter <= self.config['train']['pretrain_iters']:
             self.model.set_mode('pretrain')
             pred_xf, loss, loss_pred, loss_con, loss_graph = self.eval1_wo_mixup(x, y)
             pred_xg = torch.tensor(0.0, device=self.default_device)

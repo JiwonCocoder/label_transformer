@@ -1,4 +1,5 @@
 data/
+config/
 config/cifar10_zca.npz
 dataset/
 weights/
