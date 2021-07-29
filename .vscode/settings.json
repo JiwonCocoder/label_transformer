@@ -25,6 +25,19 @@
             "color": "yellow",
             "border": "1px solid red",
             "backgroundColor": "grey"
+        },
+        {
+            "todohighlight.keywordsPattern": "TODO:|FIXME:|", //highlight `TODO:`,`FIXME:` or content between parentheses
+            "todohighlight.defaultStyle": {
+                "color": "red",
+                "backgroundColor": "#ffab00",
+                "overviewRulerColor": "#ffab00",
+                "cursor": "pointer",
+                "border": "1px solid #eee",
+                "borderRadius": "2px",
+                "isWholeLine": true,
+                //other styling properties goes here ... 
+            },
         }
     ]
 }
