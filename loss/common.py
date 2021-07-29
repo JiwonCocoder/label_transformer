@@ -12,9 +12,11 @@ def log_loss(logits_p, prob_p, logits_q, prob_q, mask = None):
     logq = F.log_softmax(logits_q, dim=1) if logits_q is not None else torch.log(prob_q + eps)
     return -torch.mean(torch.sum(prob_p.detach() * logq, dim=1)*mask.detach())
 
-def hard_ce(logits, targets, mask, reduction = 'none'):
-    loss = F.cross_entropy(logits, targets, reduction=reduction) * mask
-    return torch.mean(loss, dim=-1)
+def hard_ce(logits, target_1D, mask=None, reduction = 'none'):
+    if mask == None:
+        mask = torch.ones(len(logits), device=logits.device)
+    loss = F.cross_entropy(logits, target_1D, reduction=reduction) * mask.detach()
+    return torch.mean(loss)
 
 
 def l2_loss(logits_p, prob_p, logits_q, prob_q):

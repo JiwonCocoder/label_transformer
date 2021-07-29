@@ -33,6 +33,13 @@ def command_interface(title=None):
     config['train']['lr'] = float(args.lr)
     assert config['train']['lr'] == float(args.lr)
     save_root = Path('weights')/args.name
+
+    if args.mode == 'finetune':
+        fine_tune_folder = args.name +"_finetune"
+        if Path(save_root).exists():
+            fine_tune_folder = fine_tune_folder + "_" + str(int(fine_tune_folder[-1]) + 1)
+        save_root = Path('weights')/fine_tune_folder
+
     if args.mode == 'new' and Path(save_root).exists():
 
         if not args.overwrite and args.name != 'exp':

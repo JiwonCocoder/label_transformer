@@ -124,7 +124,7 @@ class AttenHeadX_pos_enc(nn.Module):
 class FeatMatch(nn.Module):
     def __init__(self, backbone, num_classes, devices, num_heads=1, amp=True,
                  attention='Feat', d_model = None, label_prop = None,
-                 detach = None, scaled = None, mode='train'):
+                 detach = None, scaled = None, mode='train', clf_share = None):
         super().__init__()
         self.mode = mode
         self.num_classes = num_classes
@@ -163,12 +163,17 @@ class FeatMatch(nn.Module):
                 print("========================")                
                 self.atten = AttenHeadX_pos_enc(self.fdim, self.d_model, num_heads, num_classes, scaled)
 
-        self.clf = nn.Linear(self.fdim, num_classes)
-        # separated clf
+
+        self.clf_f = nn.Linear(self.fdim, num_classes)
         self.clf_g = nn.Linear(self.fdim, num_classes)
-        if self.mode == 'train':
-            for param in self.clf.parameters():
-                param.requires_grad = False
+        if clf_share == "no":
+            self.clf_share = False
+            # # for param in self.clf.parameters():
+            # #     param.requires_grad = False
+            # self.clf_g = nn.Linear(self.fdim, num_classes)
+        elif clf_share == "yes":
+            self.clf_share = True
+
     def set_mode(self, mode):
         self.mode = mode
 
@@ -180,16 +185,21 @@ class FeatMatch(nn.Module):
             return self.extract_feature(x)
 
         elif self.mode == 'pretrain':
+            print("pretrain")
             fx = self.extract_feature(x)
-            cls_x = self.clf(fx)
-
+            cls_x = self.clf_f(fx)
             return cls_x
 
         elif self.mode == 'train':
             if self.devices is not None:
+                for param_f, param_g in zip (self.clf_f.parameters(), self.clf_g.parameters()):
+                    param_f.data.copy_(param_g.detach().data)
+                    # (input)classifier_f: fixed // (output) classifier_g: trainable
+                    param_f.requires_grad = False
+
                 fx = self.extract_feature(x) 
                 #fx(clf_input) : (bs*(k+1), fdim)
-                cls_xf = self.clf(fx)
+                cls_xf = self.clf_f(fx)
                 fx = fx.detach()
                 cls_xf = cls_xf.detach()
                 #cls_xf(clf_out) : (bs*(k+1), num_class)
@@ -203,7 +213,9 @@ class FeatMatch(nn.Module):
                     print("(error)deEmbedding is operating")
                     print("===================")
                     fxg = self.deEmbFC(fxg)
-                cls_xg = self.clf(fxg)
+                cls_xg = self.clf_g(fxg)
+
+
             return cls_xg, cls_xf, fx, fxg
 
         # Shared clf with agg_transformer detach
@@ -241,7 +253,7 @@ class FeatMatch(nn.Module):
             if self.devices is not None:
                 fx = self.extract_feature(x)
                 # fx(clf_input) : (bs*(k+1), fdim)
-                cls_xf = self.clf(fx)
+                cls_xf = self.clf_g(fx)
                 # cls_xf(clf_out) : (bs*(k+1), num_class)
                 fxg = self.atten(fx, cls_xf)
                 # fxg(atten_out) : (1, bs*(k+1), fdim))
@@ -253,7 +265,7 @@ class FeatMatch(nn.Module):
                     print("(error)deEmbedding is operating")
                     print("===================")
                     fxg = self.deEmbFC(fxg)
-                cls_xg = self.clf(fxg)
+                cls_xg = self.clf_g(fxg)
                 '''
                 1728 = (bs + bu) * k
                 cls_xg.shape : torch.Size([1728, 10])
