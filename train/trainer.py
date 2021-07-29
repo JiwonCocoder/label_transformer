@@ -28,6 +28,10 @@ class Trainer(object):
         self.init_rand_seed()
         self.default_device = self.init_device()
 
+        self.T_origin = torch.tensor(args.temperature, dtype=torch.float32, device=self.default_device, requires_grad=True)
+        self.p_cutoff_origin = torch.tensor(args.p_cutoff, dtype=torch.float32, device=self.default_device, requires_grad=True)
+        
+
         self.dataloader_train, self.dataloader_val, self.dataloader_test, self.Ttrain, self.Tval, self.Tnorm = \
             self.init_dataloader()
         self.model = self.init_model().to(self.default_device)
@@ -40,6 +44,7 @@ class Trainer(object):
         self.logger_val = SummaryWriter(logdir=self.root_dir/'log'/'val')
         self.logger_finetune_train =SummaryWriter(logdir=self.root_dir/'log'/'finetune_train')
         self.logger_finetune_val =SummaryWriter(logdir=self.root_dir/'log'/'finetune_val')
+        self.logger_temp = SummaryWriter(logdir=self.root_dir/'log'/'temperature')
 
         self.metric = metric.AccMetric()
         self.metric_val = metric.AccMetric()
@@ -114,7 +119,7 @@ class Trainer(object):
         Initialize optimizer
         :return: torch.optim.Optimizer object. optimizer
         """
-        optimizer = optim.SGD(self.model.parameters(),
+        optimizer = optim.SGD(list(self.model.parameters()) + [self.T_origin, self.p_cutoff_origin],
                               lr=self.config['train']['lr'],
                               momentum=self.config['train']['mom'],
                               weight_decay=self.config['train']['weight_decay'],
@@ -234,7 +239,7 @@ class Trainer(object):
             (self.root_dir / f'fine_tuning_start_accuracy_{best_result * 100:.2f}').touch()
 
         else:
-            if mode == 'resume':
+            if mode == 'resume' or mode.startswith('finetune'):
                 ckpt_file = self.root_dir / 'curr_ckpt'
                 checkpoint = torch.load(ckpt_file, map_location=self.default_device)
             elif mode == 'test':
@@ -402,7 +407,7 @@ class Trainer(object):
                 self.scheduler.step(self.curr_iter)
                 self.optimizer.zero_grad()
                 with amp.autocast(enabled=self.args.amp):
-                    loss, results = self.forward_train(data)
+                    loss, results, T, p_cutoff = self.forward_train(data)
                 self.scaler.scale(loss).backward()
                 self.writer_grad_flow(self.model.named_parameters(), self.logger_train, self.curr_iter)
                 self.scaler.step(self.optimizer)
@@ -418,6 +423,9 @@ class Trainer(object):
                 for c, results_c in results.items():
                     for k, v in results_c.items():
                         self.logger_train.add_scalar(f'{c}/{k}', v, self.curr_iter)
+
+                self.logger_temp.add_scalar('temp/', T, self.curr_iter)
+                self.logger_temp.add_scalar('p_thres/', p_cutoff, self.curr_iter)
 
                 # evaluate trained model
                 if (self.curr_iter + 1) % self.config['train']['update_interval'] == 0 or (self.curr_iter + 1) == self.config['train']['update_interval'] :
@@ -467,7 +475,7 @@ class Trainer(object):
                 self.scheduler.step(self.curr_iter)
                 self.optimizer.zero_grad()
                 with amp.autocast(enabled=self.args.amp):
-                    loss, results = self.forward_train(data)
+                    loss, results, _, _ = self.forward_train(data)
                 self.scaler.scale(loss).backward()
                 self.writer_grad_flow(self.model.named_parameters(), self.logger_finetune_train, self.curr_iter)
                 self.scaler.step(self.optimizer)
