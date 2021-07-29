@@ -581,10 +581,10 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         yl = data[1].to(self.default_device)
         xu = data[2].reshape(-1, *data[2].shape[2:])
         xu = self.Tnorm(xu.to(self.default_device)).reshape(data[2].shape)
-        
+        # T = torch.clamp(self.T_origin, 1e-9, 1.0)
+        # p_cutoff = torch.clamp(self.p_cutoff_origin, 1e-9, 1.0)
         #fast debugging
-        self.config['train']['end_iters'] = 300
-        self.config['train']['pretrain_iters'] = 100
+
         # #hyper_params for update
         # T = self.t_fn(self.curr_iter)
         # p_cutoff = self.p_fn(self.curr_iter)
