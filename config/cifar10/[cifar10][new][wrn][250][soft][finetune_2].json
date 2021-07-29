@@ -30,7 +30,8 @@
     "label_prop" : "concat",
     "detach" : "no",
     "scaled" : "yes",
-    "finetune_mode": 2
+    "finetune_mode": 2,
+    "residual": "yes"
   },
   
 

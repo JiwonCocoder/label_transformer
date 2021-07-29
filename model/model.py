@@ -32,7 +32,7 @@ class AttenHead(nn.Module):
 
         return fx, w
 class AttenHeadX_concat(nn.Module):
-    def __init__(self, fdim, d_model, num_heads=8, num_classes=10, scaled=None):
+    def __init__(self, fdim, d_model, num_heads=8, num_classes=10, scaled=None, residual=None):
         super().__init__()
         self.scaled = scaled
         self.nhead = num_heads
@@ -47,6 +47,7 @@ class AttenHeadX_concat(nn.Module):
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers = self.num_layers)
         #Encoder : in(1, S, 138), out(1, S, 138)
         # self.deEmbFC = nn.Linear(self.intermediateDim, fdim)
+        self.residual = residual
         '''
         TransformerEncoder is a stack of N encoder layers
         Args:
@@ -68,8 +69,10 @@ class AttenHeadX_concat(nn.Module):
             proj_fx = proj_fx.unsqueeze(0) #(1, (bl+bu)*k, 138)
             fx_delta = self.transformer_encoder(proj_fx)
         # Residual
-        gx = fx_delta + fx
-        return gx
+        if self.residual == "yes":
+            return fx_delta + fx
+        else:
+            return fx_delta
 
 # Deprecated
 class AttenHeadX_pos_enc(nn.Module):
@@ -125,7 +128,7 @@ class AttenHeadX_pos_enc(nn.Module):
 class FeatMatch(nn.Module):
     def __init__(self, backbone, num_classes, devices, num_heads=1, amp=True,
                  attention='Feat', d_model = None, label_prop = None,
-                 detach = None, scaled = None, mode='train', clf_share = None, finetune_mode = None):
+                 detach = None, scaled = None, mode='train', finetune_mode = None, residual = None):
         super().__init__()
         self.mode = mode
         self.num_classes = num_classes
@@ -134,6 +137,7 @@ class FeatMatch(nn.Module):
         self.default_device = torch.device('cuda', devices[0]) if devices is not None else torch.device('cpu')
         fext, self.fdim = make_backbone(backbone)
         self.detach = detach
+        self.residual = residual
         print(self.devices)
         self.fext = nn.DataParallel(AmpModel(fext, amp), devices)
         print(attention)
@@ -157,7 +161,7 @@ class FeatMatch(nn.Module):
                 print("========================")            
                 print("transformer_concat")
                 print("========================")
-                self.atten = AttenHeadX_concat(self.fdim, self.d_model, num_heads, num_classes, scaled)
+                self.atten = AttenHeadX_concat(self.fdim, self.d_model, num_heads, num_classes, scaled, self.residual)
             elif label_prop == 'pos_enc':
                 print("========================")            
                 print("transformer_pos_enc")
@@ -165,8 +169,7 @@ class FeatMatch(nn.Module):
                 self.atten = AttenHeadX_pos_enc(self.fdim, self.d_model, num_heads, num_classes, scaled)
 
 
-        self.clf_f = nn.Linear(self.fdim, num_classes)
-        self.clf_g = nn.Linear(self.fdim, num_classes)
+        self.clf = nn.Linear(self.fdim, num_classes)
         # # clf_share no: use clf_f, clf_g : finetune mode 3
         # if clf_share == "no":
         #     self.clf_share = False
@@ -175,6 +178,7 @@ class FeatMatch(nn.Module):
         #     self.clf_share = True
 
         self.finetune_mode = finetune_mode
+        self.residual = residual
 
     def set_mode(self, mode):
         self.mode = mode
@@ -188,19 +192,14 @@ class FeatMatch(nn.Module):
 
         elif self.mode == 'pretrain':
             fx = self.extract_feature(x)
-            cls_x = self.clf_f(fx)
+            cls_x = self.clf(fx)
             return cls_x
 
         elif self.mode == 'train':
             if self.devices is not None:
-                for param_f, param_g in zip (self.clf_f.parameters(), self.clf_g.parameters()):
-                    param_f.data.copy_(param_g.detach().data)
-                    # (input)classifier_f: fixed // (output) classifier_g: trainable
-                    param_f.requires_grad = False
-
                 fx = self.extract_feature(x) 
                 #fx(clf_input) : (bs*(k+1), fdim)
-                cls_xf = self.clf_f(fx)
+                cls_xf = self.clf(fx)
                 fx = fx.detach()
                 cls_xf = cls_xf.detach()
                 #cls_xf(clf_out) : (bs*(k+1), num_class)
@@ -214,7 +213,7 @@ class FeatMatch(nn.Module):
                     print("(error)deEmbedding is operating")
                     print("===================")
                     fxg = self.deEmbFC(fxg)
-                cls_xg = self.clf_g(fxg)
+                cls_xg = self.clf(fxg)
 
             return cls_xg, cls_xf, fx, fxg
 
@@ -224,7 +223,7 @@ class FeatMatch(nn.Module):
                 if self.devices is not None:
                     fx = self.extract_feature(x)
                     # fx(clf_input) : (bs*(k+1), fdim)
-                    cls_xf = self.clf_g(fx)
+                    cls_xf = self.clf(fx)
                     # cls_xf(clf_out) : (bs*(k+1), num_class)
                     fxg = self.atten(
                         fx.clone().detach().requires_grad_(True), 
@@ -239,7 +238,7 @@ class FeatMatch(nn.Module):
                         print("(error)deEmbedding is operating")
                         print("===================")
                         fxg = self.deEmbFC(fxg)
-                    cls_xg = self.clf_g(fxg)
+                    cls_xg = self.clf(fxg)
                     '''
                     1728 = (bs + bu) * k
                     cls_xg.shape : torch.Size([1728, 10])
@@ -254,7 +253,7 @@ class FeatMatch(nn.Module):
                 if self.devices is not None:
                     fx = self.extract_feature(x)
                     # fx(clf_input) : (bs*(k+1), fdim)
-                    cls_xf = self.clf_g(fx)
+                    cls_xf = self.clf(fx)
                     # cls_xf(clf_out) : (bs*(k+1), num_class)
                     fxg = self.atten(fx, cls_xf)
                     # fxg(atten_out) : (1, bs*(k+1), fdim))
@@ -266,7 +265,7 @@ class FeatMatch(nn.Module):
                         print("(error)deEmbedding is operating")
                         print("===================")
                         fxg = self.deEmbFC(fxg)
-                    cls_xg = self.clf_g(fxg)
+                    cls_xg = self.clf(fxg)
                     '''
                     1728 = (bs + bu) * k
                     cls_xg.shape : torch.Size([1728, 10])

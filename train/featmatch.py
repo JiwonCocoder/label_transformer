@@ -85,7 +85,8 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
                           detach = self.config['model']['detach'],
                           scaled = self.config['model']['scaled'],
                           mode = self.args.mode,
-                          finetune_mode = self.config['model']['finetune_mode']
+                          finetune_mode = self.config['model']['finetune_mode'],
+                          residual = self.config['model']['residual'],
                           )
         print(f'Use [{self.config["model"]["backbone"]}] model with [{misc.count_n_parameters(model):,}] parameters')
         return model
