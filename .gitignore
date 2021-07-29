@@ -11,3 +11,5 @@ pretrained_weights/
 *.py[cod]
 
 .vscode/settings.json
+.vscode/
+.idea/

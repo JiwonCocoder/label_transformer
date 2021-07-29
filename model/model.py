@@ -67,6 +67,7 @@ class AttenHeadX_concat(nn.Module):
         elif self.scaled == "no":
             proj_fx = proj_fx.unsqueeze(0) #(1, (bl+bu)*k, 138)
             fx_delta = self.transformer_encoder(proj_fx)
+        # Residual
         gx = fx_delta + fx
         return gx
 
