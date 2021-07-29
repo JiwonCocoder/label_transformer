@@ -378,7 +378,7 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
             # prob_xgu_weak = prob_xgu_weak ** (1. / T)
             # prob_xgu_weak = prob_xgu_weak / prob_xgu_weak.sum(dim=1, keepdim=True)
             prob_xgu_with_T = torch.softmax(prob_xgu_weak/self.T, dim = -1)
-            # prob_xgu_with_T = prob_xgu_with_T.unsqueeze(1).repeat(1, k, 1).reshape(-1, c)
+            prob_xgu_with_T = prob_xgu_with_T.unsqueeze(1).repeat(1, k, 1).reshape(-1, c)
 
             loss_con_g = self.criterion(None, prob_xgu_with_T, logits_xgu.reshape(-1, c), None, mask_xgu)
             # loss_con_f = self.criterion(None, prob_xgu_with_T, logits_xfu.reshape(-1, c), None, mask_xgu)
@@ -585,7 +585,8 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
         # T = torch.clamp(self.T_origin, 1e-9, 1.0)
         # p_cutoff = torch.clamp(self.p_cutoff_origin, 1e-9, 1.0)
         #fast debugging
-
+        self.config['train']['pretrain_iters'] = 20
+        self.end_iter = 40
         # #hyper_params for update
         # T = self.t_fn(self.curr_iter)
         # p_cutoff = self.p_fn(self.curr_iter)
@@ -598,8 +599,9 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
             self.model.set_mode('pretrain')
             pred_xg, pred_xf, loss, loss_sup, loss_con_g, loss_con_f = self.train1_wo_mixup(xl, yl, xu)
         elif self.curr_iter < self.end_iter:
-            self.model.set_mode('train')
-            pred_xg, pred_xf, loss, loss_sup, loss_con_g, loss_con_f = self.train2_wo_mixup(xl, yl, xu)
+            self.model.set_mode('finetune')
+            #Chagned for no detach
+            pred_xg, pred_xf, loss, loss_sup, loss_con_g, loss_con_f = self.finetune_wo_mixup(xl, yl, xu)
         else:
             self.model.set_mode('finetune')
             pred_xg, pred_xf, loss, loss_sup, loss_con_g, loss_con_f = self.finetune_wo_mixup(xl, yl, xu)

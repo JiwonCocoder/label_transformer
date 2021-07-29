@@ -60,17 +60,18 @@ class AttenHeadX_concat(nn.Module):
         fx_added_cls = torch.cat([fx, cls_xf], dim=1) #((bl+bu)*k, 138)
         proj_fx = self.embFC(fx_added_cls)
         if self.scaled == "yes":
-            proj_fx_scaled = proj_fx * math.sqrt(self.d_model)
+            proj_fx_scaled = proj_fx / math.sqrt(self.d_model)
             # (in)((bl+bu)*k, 128+num_classes) (out) ((bl+bu)*k, 128)
             proj_fx_scaled = proj_fx_scaled.unsqueeze(0) #(1, (bl+bu)*k, 138)
             fx_delta = self.transformer_encoder(proj_fx_scaled)
+
         # (in)((bl+bu)*k, 128+num_classes) (out) ((bl+bu)*k, 128)
         elif self.scaled == "no":
             proj_fx = proj_fx.unsqueeze(0) #(1, (bl+bu)*k, 138)
             fx_delta = self.transformer_encoder(proj_fx)
         # Residual
         if self.residual == "yes":
-            return fx_delta + fx
+            return fx_delta + proj_fx
         else:
             return fx_delta
 
@@ -220,6 +221,7 @@ class FeatMatch(nn.Module):
         elif self.mode == 'finetune':
             # Shared clf with agg_transformer detach
             if self.finetune_mode == 1:
+                print("finetune_mode:1")
                 if self.devices is not None:
                     fx = self.extract_feature(x)
                     # fx(clf_input) : (bs*(k+1), fdim)
@@ -250,6 +252,7 @@ class FeatMatch(nn.Module):
             
             # Shared clf with no detach
             elif self.finetune_mode == 2:
+                print("finetune_mode:2")
                 if self.devices is not None:
                     fx = self.extract_feature(x)
                     # fx(clf_input) : (bs*(k+1), fdim)
