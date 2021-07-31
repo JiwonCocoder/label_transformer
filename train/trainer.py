@@ -192,7 +192,15 @@ class Trainer(object):
 
         (self.root_dir / f'{best_result * 100:.2f}').touch()
         return curr_iter, curr_result, best_result
-
+    def writer_grad_flow(self, named_parameters, writer, writer_position):
+        ave_grads = []
+        layers = []
+        for n, p in named_parameters:
+            if (p.requires_grad) and ("bias" not in n):
+                if p.grad is None:
+                    print(n, "p.grad is None")
+                    continue
+                writer.add_scalar('gradient_flow/{}'.format(n), p.grad.abs().mean().data.cpu().numpy(), writer_position)
     def forward_train(self, data):
         """
         Forward pass for training loop
@@ -230,16 +238,20 @@ class Trainer(object):
                 with amp.autocast(enabled=self.args.amp):
                     loss, results = self.forward_train(data)
                 self.scaler.scale(loss).backward()
+                self.writer_grad_flow(self.model.named_parameters(), self.logger_train, self.curr_iter)
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
 
                 # training log
+                curr_acc_agg = self.metric.record(results['y_true'], results.pop('y_pred_agg'), clear=True)
+                self.logger_train.add_scalar('acc_agg/', curr_acc_agg, self.curr_iter)
                 curr_acc = self.metric.record(results.pop('y_true'), results.pop('y_pred'), clear=True)
                 self.logger_train.add_scalar('acc/', curr_acc, self.curr_iter)
                 for c, results_c in results.items():
                     for k, v in results_c.items():
                         self.logger_train.add_scalar(f'{c}/{k}', v, self.curr_iter)
-
+                #fast_debugging
+                self.config['train']['update_interval'] = 5
                 # evaluate trained model
                 if (self.curr_iter + 1) % self.config['train']['update_interval'] == 0:
                     val_iters = np.linspace(self.curr_iter + 1 - self.config['train']['update_interval'],
@@ -248,7 +260,11 @@ class Trainer(object):
                         for i, data in enumerate(self.dataloader_val):
                             with amp.autocast(enabled=self.args.amp):
                                 results = self.forward_eval(data)
+                            curr_acc_agg = self.metric.record(results['y_true'], results.pop('y_pred_agg'), clear=True)
+                            self.logger_val.add_scalar('acc_agg/', curr_acc_agg, self.curr_iter)
+                            # remove y_true & y_pred in results(dict)
                             self.metric.record(results.pop('y_true'), results.pop('y_pred'), clear=False)
+
                             for c, results_c in results.items():
                                 for k, v in results_c.items():
                                     self.logger_val.add_scalar(f'{c}/{k}', v, val_iters[i])
