@@ -9,4 +9,5 @@ run3.sh
 run4.sh
 __pycache__/
 *.py[cod]
+practice.py
 
