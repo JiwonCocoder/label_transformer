@@ -148,7 +148,7 @@ class FeatMatch(nn.Module):
         elif attention == 'Feat':
             print("soft attention")
             self.atten = AttenHead(self.fdim, num_heads)
-        elif attention == 'Transformer' or attention == 'featTransformer':
+        elif attention == 'Transformer' or attention == 'featTransformer' or attention == 'classTransformer':
             if label_prop == 'concat':
                 print("========================")            
                 print("transformer_concat")
@@ -231,7 +231,47 @@ class FeatMatch(nn.Module):
                 #fxg : (b, fdim)
                 if self.residual:
                     fxg_weak = fxg_weak + fx_weak
+                    pdb.set_trace()
                 cls_xg_weak = self.clf(fxg_weak)
+            return cls_xf_weak, cls_xg_weak, cls_xf_strong
+
+        elif self.mode == 'train_classTransformer':
+            '''
+            (ex)
+            bsl: 64, bsu:128 = b:192
+            k : K + 1 = 9
+            f_dim = 128
+            '''
+            if self.devices is not None:
+                #x.shape (b*k, 3, 32, 32)
+                fx = self.extract_feature(x)
+                #fx.shape (b*k, 3, 32, 32)
+                cls_xf = self.clf(fx)
+                #cls_xf.shape(b, k, fdim)
+                #Split weak & strong (feature, classLogit)
+                if self.detach:
+                    fx = fx.detach()
+                    cls_xf = cls_xf.detach()
+                fx = fx.reshape(-1, 1+ self.strongAugNum, self.fdim)
+                cls_xf = cls_xf.reshape(-1, 1 + self.strongAugNum, self.num_classes)
+                # fx.shape(b, k, fdim)
+                # cls_xf.shape(b, k, class_num)
+                fx_weak, fx_strong = fx[:, 0], fx[:, 1:]
+                #fx_weak.shape (b, fdim)
+                #fx_strong.shape (b, K, fdim)
+
+                cls_xf_weak, cls_xf_strong = cls_xf[:, 0], cls_xf[:, 1:]
+                # cls_xf_weak.shape (b, class_num)
+                # cls_xf_strong.shape (b, K, class_num)
+
+                fxg_weak = self.atten(fx_weak, cls_xf_weak)
+                #fxg(atten_out) : (1, b, fdim)
+                fxg_weak = fxg_weak.squeeze(0)
+                cls_xg_weak = self.clf(fxg_weak)
+
+                #fxg : (b, fdim)
+                if self.residual:
+                    cls_xg_weak = cls_xg_weak + cls_xf_weak
             return cls_xf_weak, cls_xg_weak, cls_xf_strong
 
         elif self.mode == 'eval_featTransformer':
@@ -255,5 +295,24 @@ class FeatMatch(nn.Module):
 
             return cls_xf, cls_xg
 
+        elif self.mode == 'eval_classTransformer':
+            if self.devices is not None:
+                fx = self.extract_feature(x)
+                # fx(clf_input) : (bs*(k+1), fdim)
+                cls_xf = self.clf(fx)
+                # Split weak & strong (feature, classLogit)
+                if self.detach:
+                    fx = fx.detach()
+                    cls_xf = cls_xf.detach()
+
+                fxg = self.atten(fx, cls_xf)
+                fxg = fxg.squeeze(0)
+                cls_xg = self.clf(fxg)
+
+                # fxg(atten_out) : (1, bs*(k+1), fdim))
+                # fxg : (bs*(k+1), fdim)
+                if self.residual:
+                    cls_xg = cls_xg + cls_xf
+            return cls_xf, cls_xg
         else:
             raise ValueError

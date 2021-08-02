@@ -660,6 +660,21 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
                 # if self.curr_iter % self.config['train']['sample_interval'] == 0:
                 pred_xg, pred_xf, loss, loss_sup, loss_unsup_g, loss_unsup_f = self.train2_featTransformer_wo_mixup(xl, yl, xu)
 
+        elif self.config['model']['attention'] == "classTransformer":
+            '''
+            transformer_structure (ing): classTransformer 
+            '''
+            if self.curr_iter < self.config['train']['pretrain_iters']:
+                self.model.set_mode('pretrain')
+                pred_xg, pred_xf, loss, loss_sup, loss_unsup_g, loss_unsup_f = self.train1_wo_mixup(xl, yl, xu)
+
+            else:
+                self.model.set_mode('train_classTransformer')
+                # if self.curr_iter % self.config['train']['sample_interval'] == 0:
+                pred_xg, pred_xf, loss, loss_sup, loss_unsup_g, loss_unsup_f = self.train2_featTransformer_wo_mixup(xl, yl, xu)
+
+
+
         results = {
             'y_pred': torch.max(pred_xf, dim=1)[1].detach().cpu().numpy(),
             'y_pred_agg': torch.max(pred_xg, dim=1)[1].detach().cpu().numpy(),
@@ -713,7 +728,13 @@ class FeatMatchTrainer(ssltrainer.SSLTrainer):
             else:
                 self.model.set_mode('eval_featTransformer')
                 pred_xg, pred_xf, loss, loss_sup, loss_unsup_g, loss_unsup_f = self.eval2_featTransformer_wo_mixup(x,y)
-
+        elif self.config['model']['attention'] == "classTransformer":
+            if self.curr_iter < self.config['train']['pretrain_iters']:
+                self.model.set_mode('pretrain')
+                pred_xg, pred_xf, loss, loss_sup, loss_unsup_g, loss_unsup_f = self.eval1_wo_mixup(x, y)
+            else:
+                self.model.set_mode('eval_classTransformer')
+                pred_xg, pred_xf, loss, loss_sup, loss_unsup_g, loss_unsup_f = self.eval2_featTransformer_wo_mixup(x,y)
         results = {
             'y_pred': torch.max(pred_xf, dim=1)[1].detach().cpu().numpy(),
             'y_pred_agg': torch.max(pred_xg, dim=1)[1].detach().cpu().numpy(),
