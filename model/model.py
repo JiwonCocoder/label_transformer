@@ -32,13 +32,13 @@ class AttenHead(nn.Module):
 
         return fx, w
 class AttenHeadX_concat(nn.Module):
-    def __init__(self, fdim, d_model, num_heads=8, num_classes=10):
+    def __init__(self, fdim, d_model, num_heads=8, num_classes=10, num_layers =6):
         super().__init__()
         self.nhead = num_heads
         self.d_model = d_model
         self.f_dim = fdim
         # self.intermediateDim = fdim + num_classes #(128 + 10)
-        self.num_layers = 6
+        self.num_layers = num_layers
         #self.intermediateDim, self.num_layers
         # is based on Attention is All you Need
         self.embFC = nn.Linear(fdim + num_classes, d_model)
@@ -114,7 +114,7 @@ class AttenHeadX_pos_enc(nn.Module):
 
 class FeatMatch(nn.Module):
     def __init__(self, backbone, num_classes, devices, num_heads=1, amp=True,
-                 attention='Feat', d_model = None, label_prop = None, detach = None):
+                 attention='Feat', d_model = None, label_prop = None, detach = None, residual = None, strongAugNum = None, num_layers = None):
         super().__init__()
         '''
         self.params = parms 
@@ -127,6 +127,8 @@ class FeatMatch(nn.Module):
         self.default_device = torch.device('cuda', devices[0]) if devices is not None else torch.device('cpu')
         fext, self.fdim = make_backbone(backbone)
         self.detach = detach
+        self.residual = residual
+        self.strongAugNum = strongAugNum
         print(self.devices)
         self.fext = nn.DataParallel(AmpModel(fext, amp), devices)
         print(attention)
@@ -146,12 +148,12 @@ class FeatMatch(nn.Module):
         elif attention == 'Feat':
             print("soft attention")
             self.atten = AttenHead(self.fdim, num_heads)
-        elif attention == 'Transformer':
+        elif attention == 'Transformer' or attention == 'featTransformer':
             if label_prop == 'concat':
                 print("========================")            
                 print("transformer_concat")
                 print("========================")
-                self.atten = AttenHeadX_concat(self.fdim, self.d_model, num_heads, num_classes)
+                self.atten = AttenHeadX_concat(self.fdim, self.d_model, num_heads, num_classes, num_layers)
             elif label_prop == 'pos_enc':
                 print("========================")            
                 print("transformer_pos_enc")
@@ -184,6 +186,7 @@ class FeatMatch(nn.Module):
                 if self.detach:
                     fx = fx.detach()
                     cls_xf = cls_xf.detach()
+                    pdb.set_trace()
                 #cls_xf(clf_out) : (bs*(k+1), num_class)
                 fxg = self.atten(fx, cls_xf)
                 #fxg(atten_out) : (1, bs*(k+1), fdim))
@@ -192,17 +195,65 @@ class FeatMatch(nn.Module):
 
                 cls_xg = self.clf(fxg)
                 #cls_xg(cls_out) : (bs*(k+1), num_class)
+        elif self.mode == 'train_featTransformer':
+            '''
+            (ex)
+            bsl: 64, bsu:128 = b:192
+            k : K + 1 = 9
+            f_dim = 128
+            '''
+            if self.devices is not None:
+                #x.shape (b*k, 3, 32, 32)
+                fx = self.extract_feature(x)
+                #fx.shape (b*k, 3, 32, 32)
+                cls_xf = self.clf(fx)
+                #cls_xf.shape(b, k, fdim)
+                #Split weak & strong (feature, classLogit)
+                if self.detach:
+                    fx = fx.detach()
+                    cls_xf = cls_xf.detach()
+                    pdb.set_trace()
+                fx = fx.reshape(-1, 1+ self.strongAugNum, self.fdim)
+                cls_xf = cls_xf.reshape(-1, 1 + self.strongAugNum, self.num_classes)
+                # fx.shape(b, k, fdim)
+                # cls_xf.shape(b, k, class_num)
+                fx_weak, fx_strong = fx[:, 0], fx[:, 1:]
+                #fx_weak.shape (b, fdim)
+                #fx_strong.shape (b, K, fdim)
 
-            # if self.devices is not None:
-            #     inputs = (fx, fp.unsqueeze(0).repeat(len(self.devices), 1, 1))
-            #     fxg, wx = nn.parallel.data_parallel(self.atten, inputs, device_ids=self.devices)
-            # else:
-            #     fxg, wx = self.atten(fx, fp.unsqueeze(0))
-            #
-            # cls_xf = self.clf(fx)
-            # cls_xg = self.clf(fxg)
+                cls_xf_weak, cls_xf_strong = cls_xf[:, 0], cls_xf[:, 1:]
+                # cls_xf_weak.shape (b, class_num)
+                # cls_xf_strong.shape (b, K, class_num)
 
-            return cls_xg, cls_xf, fx, fxg
+                fxg_weak = self.atten(fx_weak, cls_xf_weak)
+                #fxg(atten_out) : (1, b, fdim)
+                fxg_weak = fxg_weak.squeeze(0)
+                #fxg : (b, fdim)
+                if self.residual:
+                    fxg_weak = fxg_weak + fx_weak
+                cls_xg_weak = self.clf(fxg_weak)
+            return cls_xf_weak, cls_xg_weak, cls_xf_strong
+
+        elif self.mode == 'eval_featTransformer':
+            if self.devices is not None:
+                fx = self.extract_feature(x)
+                #fx(clf_input) : (bs*(k+1), fdim)
+                cls_xf = self.clf(fx)
+                #Split weak & strong (feature, classLogit)
+                if self.detach:
+                    fx = fx.detach()
+                    cls_xf = cls_xf.detach()
+                    pdb.set_trace()
+
+                fxg = self.atten(fx, cls_xf)
+                #fxg(atten_out) : (1, bs*(k+1), fdim))
+                fxg = fxg.squeeze(0)
+                #fxg : (bs*(k+1), fdim)
+                if self.residual:
+                    fxg = fxg + fx
+                cls_xg = self.clf(fxg)
+
+            return cls_xf, cls_xg
 
         else:
             raise ValueError

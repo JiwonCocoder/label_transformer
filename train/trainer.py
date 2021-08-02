@@ -250,7 +250,7 @@ class Trainer(object):
                 for c, results_c in results.items():
                     for k, v in results_c.items():
                         self.logger_train.add_scalar(f'{c}/{k}', v, self.curr_iter)
-                #fast_debugging
+                #fast debugging
                 self.config['train']['update_interval'] = 5
                 # evaluate trained model
                 if (self.curr_iter + 1) % self.config['train']['update_interval'] == 0:
